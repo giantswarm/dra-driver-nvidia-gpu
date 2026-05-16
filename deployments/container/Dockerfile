@@ -1,4 +1,4 @@
-# syntax=docker.io/docker/dockerfile:1.7-labs
+# syntax=docker.io/docker/dockerfile:1.24-labs
 # The above enables the COPY --exclude + --parent flags
 # Copyright The Kubernetes Authors
 #
