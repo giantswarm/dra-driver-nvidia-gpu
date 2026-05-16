@@ -2,7 +2,7 @@ module sigs.k8s.io/dra-driver-nvidia-gpu/deployments/devel
 
 go 1.23.1
 
-require github.com/matryer/moq v0.4.0
+require github.com/matryer/moq v0.7.1
 
 replace (
 	k8s.io/api v0.32.0 => k8s.io/api v0.29.2
