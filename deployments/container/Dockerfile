@@ -1,4 +1,4 @@
-# syntax=docker.io/docker/dockerfile:1.7-labs
+# syntax=docker.io/docker/dockerfile:1.24-labs
 # The above enables the COPY --exclude flag, see:
 # https://github.com/moby/buildkit/pull/4561
 
