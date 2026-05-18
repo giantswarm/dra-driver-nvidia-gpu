@@ -25,7 +25,7 @@ require (
 	k8s.io/dynamic-resource-allocation v0.36.0-rc.0
 	k8s.io/klog/v2 v2.140.0
 	k8s.io/kubelet v0.36.0-rc.0
-	k8s.io/kubernetes v1.36.0-rc.0
+	k8s.io/kubernetes v1.36.1
 	k8s.io/mount-utils v0.36.0-rc.0
 	k8s.io/utils v0.0.0-20260210185600-b8788abfbbc2
 	tags.cncf.io/container-device-interface v1.1.0
