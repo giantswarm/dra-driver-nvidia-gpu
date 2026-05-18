@@ -33,4 +33,4 @@ VERSION="${VERSION#v}"
 # should be used here.
 
 # Create release assets to be uploaded
-helm package helm/nvidia-dra-driver-gpu/ --version $VERSION --app-version $VERSION
+helm package helm/dra-driver-nvidia-gpu/ --version $VERSION --app-version $VERSION

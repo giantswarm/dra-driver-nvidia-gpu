@@ -14,7 +14,7 @@
 # limitations under the License.
 
 apiVersion: v2
-name: nvidia-dra-driver-gpu
+name: dra-driver-nvidia-gpu
 description: Official Helm chart for the NVIDIA DRA Driver for GPUs
 type: application
 
