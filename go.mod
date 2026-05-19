@@ -6,14 +6,14 @@ toolchain go1.24.2
 
 require (
 	github.com/Masterminds/semver v1.5.0
-	github.com/NVIDIA/go-nvlib v0.7.3
-	github.com/NVIDIA/go-nvml v0.12.9-0
+	github.com/NVIDIA/go-nvlib v0.10.0
+	github.com/NVIDIA/go-nvml v0.13.0-1
 	github.com/NVIDIA/nvidia-container-toolkit v1.18.0-rc.2
 	github.com/google/uuid v1.6.0
 	github.com/prometheus/client_golang v1.22.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/pflag v1.0.7
-	github.com/stretchr/testify v1.10.0
+	github.com/stretchr/testify v1.11.1
 	github.com/urfave/cli/v2 v2.27.7
 	golang.org/x/sys v0.34.0
 	k8s.io/api v0.34.0
