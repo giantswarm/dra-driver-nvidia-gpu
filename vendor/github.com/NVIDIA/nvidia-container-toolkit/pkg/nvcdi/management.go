@@ -25,8 +25,6 @@ import (
 	"tags.cncf.io/container-device-interface/specs-go"
 
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/discover"
-	"github.com/NVIDIA/nvidia-container-toolkit/internal/edits"
-	"github.com/NVIDIA/nvidia-container-toolkit/internal/lookup/cuda"
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/nvsandboxutils"
 )
 
@@ -39,13 +37,13 @@ func (l *managementlib) DeviceSpecGenerators(...string) (DeviceSpecGenerator, er
 }
 
 // GetDeviceSpecs returns the CDI device specs for a single all device.
-func (m *managementlib) GetDeviceSpecs() ([]specs.Device, error) {
-	devices, err := m.newManagementDeviceDiscoverer()
+func (l *managementlib) GetDeviceSpecs() ([]specs.Device, error) {
+	devices, err := l.newManagementDeviceDiscoverer()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create device discoverer: %v", err)
 	}
 
-	edits, err := edits.FromDiscoverer(devices)
+	edits, err := l.editsFactory.FromDiscoverer(devices)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create edits from discoverer: %v", err)
 	}
@@ -62,57 +60,31 @@ func (m *managementlib) GetDeviceSpecs() ([]specs.Device, error) {
 }
 
 // GetCommonEdits returns the common edits for use in managementlib containers.
-func (m *managementlib) GetCommonEdits() (*cdi.ContainerEdits, error) {
-	if m.nvsandboxutilslib != nil {
-		if r := m.nvsandboxutilslib.Init(m.driverRoot); r != nvsandboxutils.SUCCESS {
-			m.logger.Warningf("Failed to init nvsandboxutils: %v; ignoring", r)
-			m.nvsandboxutilslib = nil
+func (l *managementlib) GetCommonEdits() (*cdi.ContainerEdits, error) {
+	if l.nvsandboxutilslib != nil {
+		if r := l.nvsandboxutilslib.Init(l.driver.Root); r != nvsandboxutils.SUCCESS {
+			l.logger.Warningf("Failed to init nvsandboxutils: %v; ignoring", r)
+			l.nvsandboxutilslib = nil
 		}
 		defer func() {
-			if m.nvsandboxutilslib == nil {
+			if l.nvsandboxutilslib == nil {
 				return
 			}
-			_ = m.nvsandboxutilslib.Shutdown()
+			_ = l.nvsandboxutilslib.Shutdown()
 		}()
 	}
 
-	version, err := m.getCudaVersion()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get CUDA version: %v", err)
-	}
-
-	driver, err := (*nvcdilib)(m).newDriverVersionDiscoverer(version)
+	driver, err := (*nvcdilib)(l).newDriverVersionDiscoverer()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create driver library discoverer: %v", err)
 	}
 
-	edits, err := edits.FromDiscoverer(driver)
+	edits, err := l.editsFactory.FromDiscoverer(driver)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create edits from discoverer: %v", err)
 	}
 
 	return edits, nil
-}
-
-// getCudaVersion returns the CUDA version for use in managementlib containers.
-func (m *managementlib) getCudaVersion() (string, error) {
-	version, err := (*nvcdilib)(m).getCudaVersion()
-	if err == nil {
-		return version, nil
-	}
-
-	libCudaPaths, err := cuda.New(
-		m.driver.Libraries(),
-	).Locate(".*.*")
-	if err != nil {
-		return "", fmt.Errorf("failed to locate libcuda.so: %v", err)
-	}
-
-	libCudaPath := libCudaPaths[0]
-
-	version = strings.TrimPrefix(filepath.Base(libCudaPath), "libcuda.so.")
-
-	return version, nil
 }
 
 type managementDiscoverer struct {
@@ -121,10 +93,10 @@ type managementDiscoverer struct {
 
 // newManagementDeviceDiscoverer returns a discover.Discover that discovers device nodes for use in managementlib containers.
 // NVML is not used to query devices and all device nodes are returned.
-func (m *managementlib) newManagementDeviceDiscoverer() (discover.Discover, error) {
+func (l *managementlib) newManagementDeviceDiscoverer() (discover.Discover, error) {
 	deviceNodes := discover.NewCharDeviceDiscoverer(
-		m.logger,
-		m.devRoot,
+		l.logger,
+		l.driver.DevRoot,
 		[]string{
 			"/dev/nvidia*",
 			"/dev/nvidia-caps/nvidia-cap*",
@@ -136,10 +108,7 @@ func (m *managementlib) newManagementDeviceDiscoverer() (discover.Discover, erro
 		},
 	)
 
-	deviceFolderPermissionHooks := newDeviceFolderPermissionHookDiscoverer(
-		m.logger,
-		m.devRoot,
-		m.hookCreator,
+	deviceFolderPermissionHooks := (*nvcdilib)(l).newDeviceFolderPermissionHookDiscoverer(
 		deviceNodes,
 	)
 
