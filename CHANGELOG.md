@@ -14,4 +14,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sync/patches/network-policies`: explicit ingress deny + DNS egress on both upstream NetworkPolicies.
 - `sync/patches/kyverno-policies`: Kyverno `PolicyException` template for the PSS-style policies that would otherwise block the driver's privileged + hostPath workloads (off by default; enable via `.Values.kyvernoPolicyExceptions.enabled`).
 - Chart moved from `deployments/helm/dra-driver-nvidia-gpu/` to `helm/dra-driver-nvidia-gpu/` to match the Giant Swarm `template-app` layout.
-- `.circleci/config.yml`, `renovate.json5`, `values.schema.json` for app-catalog publishing.
+- `.circleci/config.yml`, `values.schema.json` for app-catalog publishing.
