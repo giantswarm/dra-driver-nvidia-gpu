@@ -17,6 +17,7 @@ apiVersion: v2
 name: dra-driver-nvidia-gpu
 description: Official Helm chart for the NVIDIA DRA Driver for GPUs
 type: application
+icon: https://s.giantswarm.io/app-icons/kubernetes-gpu/1/light.svg
 
 # Note(JP): strict semver: no v prefix allowed
 # Downstream Giant Swarm build: pre-release suffix encodes the Flatcar patch
