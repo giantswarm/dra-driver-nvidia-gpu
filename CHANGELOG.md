@@ -15,3 +15,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sync/patches/kyverno-policies`: Kyverno `PolicyException` template for the PSS-style policies that would otherwise block the driver's privileged + hostPath workloads (off by default; enable via `.Values.kyvernoPolicyExceptions.enabled`).
 - Chart moved from `deployments/helm/dra-driver-nvidia-gpu/` to `helm/dra-driver-nvidia-gpu/` to match the Giant Swarm `template-app` layout.
 - `.circleci/config.yml`, `values.schema.json` for app-catalog publishing.
+- `icon` field in `Chart.yaml` pointing to `https://s.giantswarm.io/app-icons/kubernetes-gpu/1/light.svg` so the chart renders an icon in the customer-facing Backstage catalog.
