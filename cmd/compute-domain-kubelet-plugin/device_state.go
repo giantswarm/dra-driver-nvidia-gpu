@@ -25,12 +25,15 @@ import (
 	resourceapi "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager"
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
 
 	configapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
+	"github.com/NVIDIA/k8s-dra-driver-gpu/internal/common"
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 )
 
 type OpaqueDeviceConfig struct {
@@ -46,12 +49,13 @@ type DeviceConfigState struct {
 
 type DeviceState struct {
 	sync.Mutex
-	cdi                  *CDIHandler
-	computeDomainManager *ComputeDomainManager
-	allocatable          AllocatableDevices
-	config               *Config
+	cdi                      *CDIHandler
+	computeDomainManager     *ComputeDomainManager
+	checkpointCleanupManager *CheckpointCleanupManager
+	allocatable              AllocatableDevices
+	config                   *Config
+	nvdevlib                 *deviceLib
 
-	nvdevlib          *deviceLib
 	checkpointManager checkpointmanager.CheckpointManager
 }
 
@@ -60,6 +64,13 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 	nvdevlib, err := newDeviceLib(containerDriverRoot)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create device library: %w", err)
+	}
+
+	// Check driver version if IMEXDaemonsWithDNSNames feature gate is enabled
+	if featuregates.Enabled(featuregates.IMEXDaemonsWithDNSNames) {
+		if err := validateDriverVersionForIMEXDaemonsWithDNSNames(config.flags, nvdevlib); err != nil {
+			return nil, fmt.Errorf("driver version validation failed: %w", err)
+		}
 	}
 
 	allocatable, err := nvdevlib.enumerateAllPossibleDevices(config)
@@ -85,18 +96,20 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		return nil, fmt.Errorf("unable to create CDI handler: %w", err)
 	}
 
+	// TODO: explore calling this not only during plugin startup because this
+	// information may change during runtime.
 	cliqueID, err := nvdevlib.getCliqueID()
 	if err != nil {
 		return nil, fmt.Errorf("error getting cliqueID: %w", err)
 	}
 
-	computeDomainManager := NewComputeDomainManager(config, ComputeDomainDaemonSettingsRoot, cliqueID)
+	computeDomainManager := NewComputeDomainManager(config, cliqueID)
 
 	if err := cdi.CreateStandardDeviceSpecFile(allocatable); err != nil {
 		return nil, fmt.Errorf("unable to create base CDI spec file: %v", err)
 	}
 
-	checkpointManager, err := checkpointmanager.NewCheckpointManager(DriverPluginPath)
+	checkpointManager, err := checkpointmanager.NewCheckpointManager(config.DriverPluginPath())
 	if err != nil {
 		return nil, fmt.Errorf("unable to create checkpoint manager: %v", err)
 	}
@@ -109,6 +122,7 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 		nvdevlib:             nvdevlib,
 		checkpointManager:    checkpointManager,
 	}
+	state.checkpointCleanupManager = NewCheckpointCleanupManager(state, config.clientsets.Resource)
 
 	checkpoints, err := state.checkpointManager.ListCheckpoints()
 	if err != nil {
@@ -117,13 +131,14 @@ func NewDeviceState(ctx context.Context, config *Config) (*DeviceState, error) {
 
 	for _, c := range checkpoints {
 		if c == DriverPluginCheckpointFileBasename {
+			klog.Infof("Found previous checkpoint: %s", c)
 			return state, nil
 		}
 	}
 
-	checkpoint := newCheckpoint()
-	if err := state.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFileBasename, checkpoint); err != nil {
-		return nil, fmt.Errorf("unable to sync to checkpoint: %v", err)
+	klog.Infof("Create empty checkpoint")
+	if err := state.createCheckpoint(&Checkpoint{}); err != nil {
+		return nil, fmt.Errorf("unable to create checkpoint: %w", err)
 	}
 
 	return state, nil
@@ -135,19 +150,42 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 
 	claimUID := string(claim.UID)
 
-	checkpoint := newCheckpoint()
-	if err := s.checkpointManager.GetCheckpoint(DriverPluginCheckpointFileBasename, checkpoint); err != nil {
+	checkpoint, err := s.getCheckpoint()
+	if err != nil {
 		return nil, fmt.Errorf("unable to get checkpoint: %w", err)
 	}
 
-	preparedClaim, exists := checkpoint.V1.PreparedClaims[claimUID]
-	if exists {
-		// Make this a noop. Associated device(s) has/ave been prepared by us.
-		// Prepare() must be idempotent, as it may be invoked more than once per
-		// claim (and actual device preparation must happen at most once).
-		klog.V(6).Infof("skip prepare: claim %v found in checkpoint", claimUID)
+	preparedClaim, exists := checkpoint.V2.PreparedClaims[claimUID]
+	if exists && preparedClaim.CheckpointState == ClaimCheckpointStatePrepareCompleted {
+		// Associated device(s) has/ave been prepared by us. Prepare() must be
+		// idempotent, as it may be invoked more than once per claim (and actual
+		// device preparation must happen at most once).
+		klog.V(4).Infof("Skip prepare: claim already in PrepareCompleted state: %s", ResourceClaimToString(claim))
 		return preparedClaim.PreparedDevices.GetDevices(), nil
 	}
+
+	// In certain scenarios, the same device can be prepared/allocated more than once for different claims
+	// due to races between data processing in different goroutines in the scheduler, or when pods are
+	// force-deleted while the kubelet still considers the devices allocated.
+	// To prevent this, we check whether any device requested in the incoming claim has already been prepared
+	// and fail the request if so (unless the prior preparation was performed with admin access).
+	// More details: https://github.com/kubernetes/kubernetes/pull/136269
+	if err := s.validateNoOverlappingPreparedDevices(checkpoint, claim); err != nil {
+		return nil, fmt.Errorf("unable to prepare claim %v: %w", claimUID, err)
+	}
+
+	err = s.updateCheckpoint(func(checkpoint *Checkpoint) {
+		checkpoint.V2.PreparedClaims[claimUID] = PreparedClaim{
+			CheckpointState: ClaimCheckpointStatePrepareStarted,
+			Status:          claim.Status,
+			Name:            claim.Name,
+			Namespace:       claim.Namespace,
+		}
+	})
+	if err != nil {
+		return nil, fmt.Errorf("unable to update checkpoint: %w", err)
+	}
+	klog.V(6).Infof("checkpoint updated for claim %v", claimUID)
 
 	preparedDevices, err := s.prepareDevices(ctx, claim)
 	if err != nil {
@@ -158,17 +196,21 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 		return nil, fmt.Errorf("unable to create CDI spec file for claim: %w", err)
 	}
 
-	// Add ResourceClaimStatus API object to node-local checkpoint: the
-	// 'unprepare' code path must use local state exclusively (ResourceClaim
-	// object might have been deleted from the API server).
-	checkpoint.V1.PreparedClaims[claimUID] = PreparedClaim{
-		Status:          claim.Status,
-		PreparedDevices: preparedDevices,
+	// Some errors above along the Prepare() path leave the claim in the
+	// checkpoint, in the 'PrepareStarted' state. That's deliberate, to annotate
+	// potentially partially prepared claims. There is an asynchronous
+	// checkpoint cleanup procedure that identifies when such entry goes stale.
+	err = s.updateCheckpoint(func(checkpoint *Checkpoint) {
+		checkpoint.V2.PreparedClaims[claimUID] = PreparedClaim{
+			CheckpointState: ClaimCheckpointStatePrepareCompleted,
+			Status:          claim.Status,
+			PreparedDevices: preparedDevices,
+		}
+	})
+	if err != nil {
+		return nil, fmt.Errorf("unable to update checkpoint: %w", err)
 	}
-	if err := s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFileBasename, checkpoint); err != nil {
-		return nil, fmt.Errorf("unable to create checkpoint: %w", err)
-	}
-	klog.V(6).Infof("checkpoint written for claim %v", claimUID)
+	klog.V(6).Infof("checkpoint updated for claim %v", claimUID)
 
 	return preparedDevices.GetDevices(), nil
 }
@@ -177,67 +219,123 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.Name
 	s.Lock()
 	defer s.Unlock()
 
-	claimUID := string(claimRef.UID)
+	klog.V(6).Infof("Unprepare() for claim '%s'", claimRef.String())
 
 	// Rely on local checkpoint state for ability to clean up.
-	checkpoint := newCheckpoint()
-	if err := s.checkpointManager.GetCheckpoint(DriverPluginCheckpointFileBasename, checkpoint); err != nil {
+	checkpoint, err := s.getCheckpoint()
+	if err != nil {
 		return fmt.Errorf("unable to get checkpoint: %w", err)
 	}
 
-	pc, exists := checkpoint.V1.PreparedClaims[claimUID]
+	claimUID := string(claimRef.UID)
+	pc, exists := checkpoint.V2.PreparedClaims[claimUID]
 	if !exists {
 		// Not an error: if this claim UID is not in the checkpoint then this
 		// device was never prepared or has already been unprepared (assume that
 		// Prepare+Checkpoint are done transactionally). Note that
 		// claimRef.String() contains namespace, name, UID.
-		klog.Infof("unprepare noop: claim not found in checkpoint data: %v", claimRef.String())
+		klog.V(2).Infof("Unprepare noop: claim not found in checkpoint data: %v", claimRef.String())
 		return nil
 	}
 
-	// If pc.Status.Allocation is 'nil', attempt to pull the status from the
-	// API server. This should only ever happen if we have unmarshaled from a
-	// legacy checkpoint format that did not include the Status field.
+	// If pc.Status.Allocation is 'nil', attempt to pull the status from the API
+	// server. This should only ever happen if we have unmarshaled from a legacy
+	// checkpoint format that did not include the Status field.
 	//
 	// TODO: Remove this one release cycle following the v25.3.0 release
 	if pc.Status.Allocation == nil {
-		klog.Infof("PreparedClaim status was unset in Checkpoint for ResourceClaim %s: attempting to pull it from API server", claimRef.String())
+		klog.Infof("PreparedClaim Status not set in Checkpoint for claim '%s': attempting to pull it from API server", claimRef.String())
 		claim, err := s.config.clientsets.Resource.ResourceClaims(claimRef.Namespace).Get(
 			ctx,
 			claimRef.Name,
 			metav1.GetOptions{})
 
+		// TODO: distinguish errors -- if this is a 'not found' error then this
+		// is permanent and we may want to drop the claim from the checkpoint.
+		// Otherwise, this might be worth retrying?
 		if err != nil {
 			return permanentError{fmt.Errorf("failed to fetch ResourceClaim %s: %w", claimRef.String(), err)}
 		}
 		if claim.Status.Allocation == nil {
+			// TODO: drop claim from checkpoint?
 			return permanentError{fmt.Errorf("no allocation set in ResourceClaim %s", claim.String())}
 		}
 		pc.Status = claim.Status
 	}
 
-	if err := s.unprepareDevices(ctx, &pc.Status); err != nil {
-		return fmt.Errorf("unprepare devices failed: %w", err)
+	switch pc.CheckpointState {
+	case ClaimCheckpointStatePrepareStarted, ClaimCheckpointStatePrepareCompleted:
+		if err := s.unprepareDevices(ctx, &pc.Status); err != nil {
+			return fmt.Errorf("unprepare devices failed: %w", err)
+		}
+	default:
+		return fmt.Errorf("unsupported ClaimCheckpointState: %v", pc.CheckpointState)
 	}
 
-	err := s.cdi.DeleteClaimSpecFile(claimUID)
-	if err != nil {
+	// Assume that this is a retryable error. If there is any chance for this
+	// error to be permanent: drop the claim from checkpoint then regardless?
+	if err := s.cdi.DeleteClaimSpecFileIfExists(claimUID); err != nil {
 		return fmt.Errorf("unable to delete CDI spec file for claim: %w", err)
 	}
 
-	// Write new checkpoint reflecting that all devices for this claim have been
-	// unprepared (by virtue of removing its UID from all mappings).
-	delete(checkpoint.V1.PreparedClaims, claimUID)
+	// Mutate checkpoint reflecting that all devices for this claim have been
+	// unprepared, by virtue of removing its UID from the PreparedClaims map.
+	err = s.deleteClaimFromCheckpoint(claimRef)
+	if err != nil {
+		return fmt.Errorf("error deleting claim from checkpoint: %w", err)
+	}
+	return nil
+}
+
+func (s *DeviceState) createCheckpoint(cp *Checkpoint) error {
+	return s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFileBasename, cp)
+}
+
+func (s *DeviceState) getCheckpoint() (*Checkpoint, error) {
+	checkpoint := &Checkpoint{}
+	if err := s.checkpointManager.GetCheckpoint(DriverPluginCheckpointFileBasename, checkpoint); err != nil {
+		return nil, err
+	}
+	return checkpoint.ToLatestVersion(), nil
+}
+
+// Read checkpoint from store, perform mutation, and write checkpoint back. Any
+// mutation of the checkpoint must go through this function. The
+// read-mutate-write sequence must be performed under a lock: we must be
+// conceptually certain that multiple read-mutate-write actions never overlap.
+// Currently, it is assumed that any caller gets here by first acquiring
+// driver's `pulock`.
+func (s *DeviceState) updateCheckpoint(mutate func(*Checkpoint)) error {
+	checkpoint, err := s.getCheckpoint()
+	if err != nil {
+		return fmt.Errorf("unable to get checkpoint: %w", err)
+	}
+
+	mutate(checkpoint)
+
 	if err := s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFileBasename, checkpoint); err != nil {
-		return fmt.Errorf("create checkpoint failed: %w", err)
+		return fmt.Errorf("unable to create checkpoint: %w", err)
 	}
 
 	return nil
 }
 
+func (s *DeviceState) deleteClaimFromCheckpoint(claimRef kubeletplugin.NamespacedObject) error {
+	err := s.updateCheckpoint(func(cp *Checkpoint) {
+		delete(cp.V2.PreparedClaims, string(claimRef.UID))
+	})
+	if err != nil {
+		return fmt.Errorf("unable to update checkpoint: %w", err)
+	}
+	klog.V(6).Infof("Deleted claim from checkpoint: %s", claimRef.String())
+	return nil
+}
+
 func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.ResourceClaim) (PreparedDevices, error) {
-	// Generate a mapping of each OpaqueDeviceConfigs to the Device.Results it applies to
-	configResultsMap, err := s.getConfigResultsMap(&claim.Status)
+	// Generate a mapping of each OpaqueDeviceConfigs to the Device.Results it
+	// applies to. Strict-decode: data is provided by user and may be completely
+	// unvalidated so far (in absence of validating webhook).
+	configResultsMap, err := s.getConfigResultsMap(&claim.Status, configapi.StrictDecoder)
 	if err != nil {
 		return nil, fmt.Errorf("error generating configResultsMap: %w", err)
 	}
@@ -325,8 +423,11 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 }
 
 func (s *DeviceState) unprepareDevices(ctx context.Context, cs *resourceapi.ResourceClaimStatus) error {
-	// Generate a mapping of each OpaqueDeviceConfigs to the Device.Results it applies to
-	configResultsMap, err := s.getConfigResultsMap(cs)
+	// Generate a mapping of each OpaqueDeviceConfigs to the Device.Results it
+	// applies to. Non-strict decoding: do not error out on unknown fields (data
+	// source is checkpointed JSON written by potentially newer versions of this
+	// driver).
+	configResultsMap, err := s.getConfigResultsMap(cs, configapi.NonstrictDecoder)
 	if err != nil {
 		return fmt.Errorf("error generating configResultsMap: %w", err)
 	}
@@ -363,30 +464,50 @@ func (s *DeviceState) applyConfig(ctx context.Context, config configapi.Interfac
 }
 
 func (s *DeviceState) applyComputeDomainChannelConfig(ctx context.Context, config *configapi.ComputeDomainChannelConfig, claim *resourceapi.ResourceClaim, results []*resourceapi.DeviceRequestAllocationResult) (*DeviceConfigState, error) {
+	// Not an expected error, but a violated invariant.
+	if len(results) != 1 {
+		return nil, fmt.Errorf("applyComputeDomainChannelConfig: unexpected results %v", results)
+	}
+
+	// If explicitly requested, inject all channels instead of just one.
+	chancount := 1
+	if config.AllocationMode == configapi.ComputeDomainChannelAllocationModeAll {
+		chancount = s.nvdevlib.maxImexChannelCount
+	}
+
 	// Declare a device group state object to populate.
 	configState := DeviceConfigState{
 		Type:          ComputeDomainChannelType,
 		ComputeDomain: config.DomainID,
 	}
 
+	// Treat each request as a request for channel zero, even if
+	// AllocationModeAll.
+	if err := s.assertImexChannelNotAllocated(0); err != nil {
+		return nil, fmt.Errorf("allocation failed: %w", err)
+	}
+
 	// Create any necessary ComputeDomain channels and gather their CDI container edits.
-	for _, r := range results {
-		channel := s.allocatable[r.Device].Channel
-		if err := s.computeDomainManager.AssertComputeDomainNamespace(ctx, claim.Namespace, config.DomainID); err != nil {
-			return nil, permanentError{fmt.Errorf("error asserting ComputeDomain's namespace: %w", err)}
-		}
-		if err := s.computeDomainManager.AddNodeLabel(ctx, config.DomainID); err != nil {
-			return nil, fmt.Errorf("error adding Node label for ComputeDomain: %w", err)
-		}
-		if err := s.computeDomainManager.AssertComputeDomainReady(ctx, config.DomainID); err != nil {
-			return nil, fmt.Errorf("error asserting ComputeDomain Ready: %w", err)
-		}
-		if s.computeDomainManager.cliqueID != "" {
-			if err := s.nvdevlib.createComputeDomainChannelDevice(channel.ID); err != nil {
-				return nil, fmt.Errorf("error creating ComputeDomain channel device: %w", err)
-			}
-			configState.containerEdits = configState.containerEdits.Append(s.computeDomainManager.GetComputeDomainChannelContainerEdits(s.cdi.devRoot, channel))
-		}
+	if err := s.computeDomainManager.AssertComputeDomainNamespace(ctx, claim.Namespace, config.DomainID); err != nil {
+		return nil, permanentError{fmt.Errorf("error asserting ComputeDomain's namespace: %w", err)}
+	}
+
+	if err := s.computeDomainManager.AddNodeLabel(ctx, config.DomainID); err != nil {
+		return nil, fmt.Errorf("error adding Node label for ComputeDomain: %w", err)
+	}
+
+	if err := s.computeDomainManager.AssertComputeDomainReady(ctx, config.DomainID); err != nil {
+		return nil, fmt.Errorf("error asserting ComputeDomain Ready: %w", err)
+	}
+
+	if s.computeDomainManager.cliqueID == "" {
+		// Do not inject IMEX channel device nodes.
+		return &configState, nil
+	}
+
+	for _, info := range s.nvdevlib.nvCapImexChanDevInfos[:chancount] {
+		edits := s.computeDomainManager.GetComputeDomainChannelContainerEdits(s.cdi.devRoot, info)
+		configState.containerEdits = configState.containerEdits.Append(edits)
 	}
 
 	return &configState, nil
@@ -415,47 +536,51 @@ func (s *DeviceState) applyComputeDomainDaemonConfig(ctx context.Context, config
 		ComputeDomain: config.DomainID,
 	}
 
-	// Only prepare files to inject to the daemon if IMEX is supported.
+	// Create new ComputeDomain daemon settings from the ComputeDomainManager.
+	computeDomainDaemonSettings := s.computeDomainManager.NewSettings(config.DomainID)
+
+	// Prepare injecting IMEX daemon config files even if IMEX is not supported.
+	// This for example creates
+	// '/var/lib/kubelet/plugins/compute-domain.nvidia.com/domains/<uid>' on the
+	// host which is used as mount source mapped to /imexd in the CD daemon
+	// container.
+	if err := computeDomainDaemonSettings.Prepare(ctx); err != nil {
+		return nil, fmt.Errorf("error preparing ComputeDomain daemon settings for requests '%v' in claim '%v': %w", requests, claim.UID, err)
+	}
+
+	// Always inject CD config details into the CD daemon (regardless of clique
+	// ID being empty or not).
+	edits, err := computeDomainDaemonSettings.GetCDIContainerEditsCommon(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("error getting common container edits for ComputeDomain daemon '%s': %w", config.DomainID, err)
+	}
+	configState.containerEdits = configState.containerEdits.Append(edits)
+
+	// Only inject dev nodes related to
+	// /proc/driver/nvidia/capabilities/fabric-imex-mgmt if IMEX is supported
+	// (if we want to start the IMEX daemon process in the CD daemon pod).
 	if s.computeDomainManager.cliqueID != "" {
-		// Parse the device node info for the fabic-imex-mgmt nvcap.
-		nvcapDeviceInfo, err := s.nvdevlib.parseNVCapDeviceInfo(nvidiaCapFabricImexMgmtPath)
+		// Parse the device node info for the fabric-imex-mgmt nvcap.
+		nvcapDeviceInfo, err := common.ParseNVCapDeviceInfo(nvidiaCapFabricImexMgmtPath)
 		if err != nil {
-			return nil, fmt.Errorf("error parsing nvcap device info for fabic-imex-mgmt: %w", err)
+			return nil, fmt.Errorf("error parsing nvcap device info for fabric-imex-mgmt: %w", err)
 		}
-
-		// Create the device node for the fabic-imex-mgmt nvcap.
-		if err := s.nvdevlib.createNvCapDevice(nvidiaCapFabricImexMgmtPath); err != nil {
-			return nil, fmt.Errorf("error creating nvcap device for fabic-imex-mgmt: %w", err)
-		}
-
-		// Create new ComputeDomain daemon settings from the ComputeDomainManager.
-		computeDomainDaemonSettings := s.computeDomainManager.NewSettings(config.DomainID)
-
-		// Prepare the new ComputeDomain daemon.
-		if err := computeDomainDaemonSettings.Prepare(ctx); err != nil {
-			return nil, fmt.Errorf("error preparing ComputeDomain daemon settings for requests '%v' in claim '%v': %w", requests, claim.UID, err)
-		}
-
-		// Store information about the ComputeDomain daemon in the configState.
-		edits, err := computeDomainDaemonSettings.GetCDIContainerEdits(ctx, s.cdi.devRoot, nvcapDeviceInfo)
-		if err != nil {
-			return nil, fmt.Errorf("error getting container edits for ComputeDomain daemon for requests '%v' in claim '%v': %w", requests, claim.UID, err)
-		}
+		edits := computeDomainDaemonSettings.GetCDIContainerEditsForImex(ctx, s.cdi.devRoot, nvcapDeviceInfo)
 		configState.containerEdits = configState.containerEdits.Append(edits)
 	}
 
 	return &configState, nil
 }
 
-func (s *DeviceState) getConfigResultsMap(rcs *resourceapi.ResourceClaimStatus) (map[runtime.Object][]*resourceapi.DeviceRequestAllocationResult, error) {
+func (s *DeviceState) getConfigResultsMap(rcs *resourceapi.ResourceClaimStatus, decoder runtime.Decoder) (map[runtime.Object][]*resourceapi.DeviceRequestAllocationResult, error) {
 	// Retrieve the full set of device configs for the driver.
 	configs, err := GetOpaqueDeviceConfigs(
-		configapi.Decoder,
+		decoder,
 		DriverName,
 		rcs.Allocation.Devices.Config,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("error getting opaque device configs: %v", err)
+		return nil, fmt.Errorf("error getting opaque device configs: %w", err)
 	}
 
 	// Add the default ComputeDomainConfig to the front of the config list with the
@@ -505,6 +630,73 @@ func (s *DeviceState) getConfigResultsMap(rcs *resourceapi.ResourceClaimStatus) 
 		}
 	}
 	return configResultsMap, nil
+}
+
+// assertImexChannelNotAllocated() consults the absolute, node-local source of
+// truth (the checkpoint data). It fails when the IMEX channel with ID `id` is
+// already in use by another resource claim.
+//
+// Must be performed in the Prepare() path for any claim asking for a channel.
+// This makes sure that Prepare() and Unprepare() calls acting on the same
+// resource are processed in the correct order (this prevents for example
+// unprepare-after-prepare, cf. issue 641).
+//
+// The implementation may become more involved when the same IMEX channel may be
+// shared across pods on the same node).
+func (s *DeviceState) assertImexChannelNotAllocated(id int) error {
+	cp, err := s.getCheckpoint()
+	if err != nil {
+		return fmt.Errorf("unable to get checkpoint: %w", err)
+	}
+
+	for claimUID, claim := range cp.V2.PreparedClaims {
+		// Ignore non-completed preparations: file-based locking guarantees that
+		// only one Prepare() runs at any given time. If a claim is in the
+		// `PrepareStarted` state then it is not actually currently in progress
+		// of being prepared, but either retried soon (in which case we are
+		// faster and win over it) or never retried (in which case we can also
+		// safely allocate).
+		if claim.CheckpointState != ClaimCheckpointStatePrepareCompleted {
+			continue
+		}
+
+		for _, devs := range claim.PreparedDevices {
+			for _, d := range devs.Devices {
+				if d.Channel != nil && d.Channel.Info.ID == id {
+					// Maybe log something based on `claim.Status.ReservedFor`
+					// to facilitate debugging.
+					return fmt.Errorf("channel %d already allocated by claim %s (according to checkpoint)", id, claimUID)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// validateDriverVersionForIMEXDaemonsWithDNSNames validates that the driver version
+// meets the minimum requirement for the IMEXDaemonsWithDNSNames feature gate.
+func validateDriverVersionForIMEXDaemonsWithDNSNames(flags *Flags, nvdevlib *deviceLib) error {
+	klog.Infof("Starting driver version validation for IMEXDaemonsWithDNSNames feature...")
+	klog.Infof("Minimum required version: %s", IMEXDaemonsWithDNSNamesMinDriverVersion)
+
+	driverVer, err := nvdevlib.getDriverVersion()
+	if err != nil {
+		return fmt.Errorf("error getting driver version: %w", err)
+	}
+
+	minVersion, err := version.ParseGeneric(IMEXDaemonsWithDNSNamesMinDriverVersion)
+	if err != nil {
+		return fmt.Errorf("error parsing minimum version: %w", err)
+	}
+
+	if driverVer.LessThan(minVersion) {
+		klog.Errorf("IMEXDaemonsWithDNSNames feature requires GPU driver version >= %s, but found %s", minVersion.String(), driverVer.String())
+		klog.Errorf("If installed via helm, set featureGates.IMEXDaemonsWithDNSNames=false to disable")
+		return fmt.Errorf("minimum version not satisfied for IMEXDaemonsWithDNSNames feature")
+	}
+
+	klog.Infof("Driver version validation passed: %s >= %s", driverVer.String(), minVersion.String())
+	return nil
 }
 
 // GetOpaqueDeviceConfigs returns an ordered list of the configs contained in possibleConfigs for this driver.
@@ -559,7 +751,11 @@ func GetOpaqueDeviceConfigs(
 
 		decodedConfig, err := runtime.Decode(decoder, config.Opaque.Parameters.Raw)
 		if err != nil {
-			return nil, fmt.Errorf("error decoding config parameters: %w", err)
+			// Bad opaque config: i) do not retry preparing this resource
+			// internally and ii) return notion of permanent error to kubelet,
+			// to give it an opportunity to play this error back to the user so
+			// that it becomes actionable.
+			return nil, permanentError{fmt.Errorf("error decoding config parameters: %w", err)}
 		}
 
 		resultConfig := &OpaqueDeviceConfig{
@@ -571,4 +767,61 @@ func GetOpaqueDeviceConfigs(
 	}
 
 	return resultConfigs, nil
+}
+
+// requestedNonAdminDevices returns the set of device names requested by the claim,
+// excluding admin-access allocations.
+func (s *DeviceState) requestedNonAdminDevices(claim *resourceapi.ResourceClaim) map[string]struct{} {
+	requested := make(map[string]struct{}, len(claim.Status.Allocation.Devices.Results))
+
+	for _, r := range claim.Status.Allocation.Devices.Results {
+		if r.Driver != DriverName {
+			continue
+		}
+		if r.AdminAccess != nil && *r.AdminAccess {
+			continue
+		}
+		requested[r.Device] = struct{}{}
+	}
+	return requested
+}
+
+// validateNoOverlappingPreparedDevices checks whether the given claim requests any device that is
+// already allocated (non-admin) to a different claim that has completed preparation.
+func (s *DeviceState) validateNoOverlappingPreparedDevices(checkpoint *Checkpoint, claim *resourceapi.ResourceClaim) error {
+	claimUID := string(claim.UID)
+
+	// Get the set of requested non-admin devices for the current claim.
+	requestedDevices := s.requestedNonAdminDevices(claim)
+	if len(requestedDevices) == 0 {
+		return nil
+	}
+
+	for existingClaimUID, pc := range checkpoint.V2.PreparedClaims {
+		// Skip the current claim.
+		if existingClaimUID == claimUID {
+			continue
+		}
+		if pc.CheckpointState != ClaimCheckpointStatePrepareCompleted {
+			continue
+		}
+
+		// Get the non-admin devices from the prepared claim in the checkpoint.
+		// We allow overlapping device allocations only if they are requested with admin access.
+		preparedDevices := pc.GetNonAdminDevices()
+		if len(preparedDevices) == 0 {
+			continue
+		}
+
+		// Check for overlaps between requested devices from the current claim and others.
+		for device := range requestedDevices {
+			if _, found := preparedDevices[device]; found {
+				return fmt.Errorf(
+					"requested device %s is already allocated to different claim %s",
+					device, existingClaimUID,
+				)
+			}
+		}
+	}
+	return nil
 }

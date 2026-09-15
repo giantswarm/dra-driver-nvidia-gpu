@@ -14,11 +14,8 @@
 
 BUILD_MULTI_ARCH_IMAGES ?= no
 DOCKER ?= docker
-BUILDX  =
-ifeq ($(BUILD_MULTI_ARCH_IMAGES),true)
-BUILDX = buildx
-endif
-MKDIR    ?= mkdir
+REGCTL ?= regctl
+PUSH_ON_BUILD ?= false
 
 ##### Global variables #####
 include $(CURDIR)/versions.mk
@@ -33,77 +30,75 @@ endif
 # is not v-prefixed.
 IMAGE_VERSION := $(VERSION)
 
-IMAGE_TAG ?= $(IMAGE_VERSION)-$(DIST)
+IMAGE_TAG ?= $(IMAGE_VERSION)
 IMAGE = $(IMAGE_NAME):$(IMAGE_TAG)
 
-OUT_IMAGE_NAME ?= $(IMAGE_NAME)
-OUT_IMAGE_VERSION ?= $(IMAGE_VERSION)
-OUT_IMAGE_TAG = $(OUT_IMAGE_VERSION)-$(DIST)
-OUT_IMAGE = $(OUT_IMAGE_NAME):$(OUT_IMAGE_TAG)
-
 ##### Public rules #####
-DEFAULT_PUSH_TARGET := ubi9
-DISTRIBUTIONS = $(DEFAULT_PUSH_TARGET)
+.PHONY: build
 
-IMAGE_TARGETS := $(patsubst %,image-%,$(DISTRIBUTIONS))
-BUILD_TARGETS := $(patsubst %,build-%,$(DISTRIBUTIONS))
-PUSH_TARGETS := $(patsubst %,push-%,$(DISTRIBUTIONS))
-TEST_TARGETS := $(patsubst %,test-%, $(DISTRIBUTIONS))
-
-.PHONY: $(DISTRIBUTIONS) $(PUSH_TARGETS) $(BUILD_TARGETS) $(TEST_TARGETS) $(BUILD_TARGETS)
-
-ifneq ($(BUILD_MULTI_ARCH_IMAGES),true)
-include $(CURDIR)/deployments/container/native-only.mk
+# TODO: revisit compression=zstd,compression-level=15
+ifeq ($(BUILD_MULTI_ARCH_IMAGES),true)
+BUILDX = buildx
+DOCKER_BUILD_OPTIONS = \
+	--output=type=image,push=$(PUSH_ON_BUILD) \
+	--provenance=false \
+	--sbom=false
+DOCKER_BUILD_PLATFORM_OPTIONS = --platform=linux/amd64,linux/arm64
 else
-include $(CURDIR)/deployments/container/multi-arch.mk
+# We also support building single-platform images.
+# These are mostly used for local testing and as such we don't allow these to
+# be pushed on build.
+ifeq ($(PUSH_ON_BUILD),true)
+$(error PUSH_ON_BUILD=true is not supported for single architecture builds)
+endif
+ARCH ?= $(shell uname -m | sed -e 's,aarch64,arm64,' -e 's,x86_64,amd64,')
+DOCKER_BUILD_PLATFORM_OPTIONS = --platform=linux/$(ARCH)
 endif
 
-# For the default push target we also push a short tag equal to the version.
-# We skip this for the development release
-DEVEL_RELEASE_IMAGE_VERSION ?= devel
-PUSH_MULTIPLE_TAGS ?= true
-ifeq ($(strip $(OUT_IMAGE_VERSION)),$(DEVEL_RELEASE_IMAGE_VERSION))
-PUSH_MULTIPLE_TAGS = false
-endif
-ifeq ($(PUSH_MULTIPLE_TAGS),true)
-push-$(DEFAULT_PUSH_TARGET): push-short
+DOCKERFILE = $(CURDIR)/deployments/container/Dockerfile
+
+DOCKER_BUILD_CACHE_OPTIONS :=
+
+ifeq ($(CACHE_TO_GHCR), true)
+  DOCKER_BUILD_CACHE_OPTIONS +=	\
+	--cache-to type=registry,ref=ghcr.io/nvidia/k8s-dra-driver-gpu:buildcache,mode=max
 endif
 
-push-%: DIST = $(*)
-push-short: DIST = $(DEFAULT_PUSH_TARGET)
+ifeq ($(CACHE_FROM_GHCR), true)
+  DOCKER_BUILD_CACHE_OPTIONS +=	\
+	--cache-from type=registry,ref=ghcr.io/nvidia/k8s-dra-driver-gpu:buildcache
+endif
 
-build-%: DIST = $(*)
-build-%: DOCKERFILE = $(CURDIR)/deployments/container/Dockerfile
+# Use mount cache (on host fs) for Go build&mod cache:
+# 1) Local dev: yes (store on host: get all benefits of the Go build cache).
+# 2) CI: no (cannot preserve it across builds; store it in container image layer
+#    instead for _only some_ of its benefits).
+#
+# Use the `CI` environment variable to distinguish both cases. Note that
+# `/mc/go/build-cache` `/mc/go/pkg/mod` are hard-coded locations in the
+# Dockerfile; backed by a mount cache (use those two locations in local dev,
+# don't use them in CI).
+GOCACHE = /mc/go/build-cache
+GOMODCACHE = /mc/go/pkg/mod
+ifeq ($(CI), true)
+	GOCACHE=/go/build-cache
+	GOMODCACHE=/go/pkg/mod
+endif
 
-# Use a generic build target to build the relevant images
-$(IMAGE_TARGETS): image-%:
+build:
 	DOCKER_BUILDKIT=1 \
-		$(DOCKER) $(BUILDX) build --pull \
-		--provenance=false --sbom=false \
+		$(DOCKER) buildx build --pull \
 		$(DOCKER_BUILD_OPTIONS) \
 		$(DOCKER_BUILD_PLATFORM_OPTIONS) \
+		$(DOCKER_BUILD_CACHE_OPTIONS) \
 		--tag $(IMAGE) \
 		--build-arg GOLANG_VERSION="$(GOLANG_VERSION)" \
+		--build-arg BASH_STATIC_GIT_REF="$(BASH_STATIC_GIT_REF)" \
 		--build-arg TOOLKIT_CONTAINER_IMAGE="$(TOOLKIT_CONTAINER_IMAGE)" \
 		--build-arg VERSION="$(VERSION)" \
 		--build-arg GIT_COMMIT="$(GIT_COMMIT)" \
+		--build-arg GOCACHE="$(GOCACHE)" \
+		--build-arg GOMODCACHE="$(GOMODCACHE)" \
 		--progress=plain \
 		-f $(DOCKERFILE) \
 		$(CURDIR)
-
-# Handle the default build target.
-.PHONY: build
-build: $(DEFAULT_PUSH_TARGET)
-$(DEFAULT_PUSH_TARGET): build-$(DEFAULT_PUSH_TARGET)
-$(DEFAULT_PUSH_TARGET): DIST = $(DEFAULT_PUSH_TARGET)
-
-REGCTL ?= regctl
-$(PUSH_TARGETS): push-%:
-	$(REGCTL) \
-		image copy \
-		$(IMAGE) $(OUT_IMAGE)
-
-push-short:
-	$(REGCTL) \
-		image copy \
-		$(IMAGE) $(OUT_IMAGE_NAME):$(OUT_IMAGE_VERSION)

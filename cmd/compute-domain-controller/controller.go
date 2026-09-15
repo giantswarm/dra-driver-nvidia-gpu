@@ -21,6 +21,8 @@ import (
 	"context"
 	"fmt"
 
+	"k8s.io/klog/v2"
+
 	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flags"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/workqueue"
 )
@@ -38,11 +40,22 @@ type ManagerConfig struct {
 	// imageName is the full image name to use when rendering templates
 	imageName string
 
+	// maxNodesPerIMEXDomain is the maximum number of nodes per IMEX domain to allocate
+	maxNodesPerIMEXDomain int
+
 	// clientsets provides access to various Kubernetes API client interfaces
 	clientsets flags.ClientSets
 
 	// workQueue manages the asynchronous processing of tasks
 	workQueue *workqueue.WorkQueue
+
+	// additionalNamespaces is a list of additional namespaces
+	// where the driver can manage resources
+	additionalNamespaces []string
+
+	// logVerbosityCDDaemon controls the log verbosity for dynamically launched
+	// ComputeDomain daemons.
+	logVerbosityCDDaemon int
 }
 
 // Controller manages the lifecycle of the DRA driver and its components.
@@ -63,12 +76,18 @@ func (c *Controller) Run(ctx context.Context) error {
 	workQueue := workqueue.New(workqueue.DefaultControllerRateLimiter())
 
 	managerConfig := &ManagerConfig{
-		driverName:      c.config.driverName,
-		driverNamespace: c.config.flags.namespace,
-		imageName:       c.config.flags.imageName,
-		clientsets:      c.config.clientsets,
-		workQueue:       workQueue,
+		driverName:            c.config.driverName,
+		driverNamespace:       c.config.flags.namespace,
+		additionalNamespaces:  c.config.flags.additionalNamespaces.Value(),
+		imageName:             c.config.flags.imageName,
+		maxNodesPerIMEXDomain: c.config.flags.maxNodesPerIMEXDomain,
+		clientsets:            c.config.clientsets,
+		workQueue:             workQueue,
+		logVerbosityCDDaemon:  c.config.flags.logVerbosityCDDaemon,
 	}
+
+	// TODO: log full, nested cliFlags structure.
+	klog.Infof("controller manager config: %+v", managerConfig)
 
 	cdManager := NewComputeDomainManager(managerConfig)
 

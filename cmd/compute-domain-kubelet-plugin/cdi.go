@@ -191,9 +191,9 @@ func (cdi *CDIHandler) CreateStandardDeviceSpecFile(allocatable AllocatableDevic
 	}
 
 	// Update the spec to include only the minimum version necessary.
-	minVersion, err := cdiapi.MinimumRequiredVersion(spec.Raw())
+	minVersion, err := cdispec.MinimumRequiredVersion(spec.Raw())
 	if err != nil {
-		return fmt.Errorf("failed to get minimum required CDI spec version: %v", err)
+		return fmt.Errorf("failed to get minimum required CDI spec version: %w", err)
 	}
 	spec.Raw().Version = minVersion
 
@@ -248,9 +248,9 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 	}
 
 	// Update the spec to include only the minimum version necessary.
-	minVersion, err := cdiapi.MinimumRequiredVersion(spec.Raw())
+	minVersion, err := cdispec.MinimumRequiredVersion(spec.Raw())
 	if err != nil {
-		return fmt.Errorf("failed to get minimum required CDI spec version: %v", err)
+		return fmt.Errorf("failed to get minimum required CDI spec version: %w", err)
 	}
 	spec.Raw().Version = minVersion
 
@@ -259,7 +259,7 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, preparedDevices Prep
 	return cdi.cache.WriteSpec(spec.Raw(), specName)
 }
 
-func (cdi *CDIHandler) DeleteClaimSpecFile(claimUID string) error {
+func (cdi *CDIHandler) DeleteClaimSpecFileIfExists(claimUID string) error {
 	specName := cdiapi.GenerateTransientSpecName(cdi.vendor, cdi.claimClass, claimUID)
 	return cdi.cache.RemoveSpec(specName)
 }

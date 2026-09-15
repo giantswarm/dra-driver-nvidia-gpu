@@ -93,7 +93,9 @@ check-modules: vendor
 
 COVERAGE_FILE := coverage.out
 test: build cmds
-	go test -race -cover -v -coverprofile=$(COVERAGE_FILE) $(MODULE)/...
+	go test -race -cover -v -coverprofile=$(COVERAGE_FILE) \
+		-ldflags "-X $(CLI_VERSION_PACKAGE).version=$(CLI_VERSION)" \
+		$(MODULE)/...
 
 coverage: test
 	cat $(COVERAGE_FILE) | grep -v "_mock.go" > $(COVERAGE_FILE).no-mocks
@@ -218,3 +220,20 @@ PHONY: .shell
 		-w /work \
 		--user $$(id -u):$$(id -g) \
 		$(BUILDIMAGE)
+
+.PHONY: bats bats-cd bats-gpu
+bats:
+	make -f tests/bats/Makefile tests
+
+# Run compute domain specific tests
+bats-cd:
+	make -f tests/bats/Makefile tests-cd
+
+# Run GPU plugin specific tests
+bats-gpu:
+	make -f tests/bats/Makefile tests-gpu
+
+.PHONY: image-build-and-copy-to-nodes
+image-build-and-copy-to-nodes:
+	make -f deployments/container/Makefile build
+	bash hack/copy-image-to-k8s-nodes.sh nvcr.io/nvidia/k8s-dra-driver-gpu:$(VERSION)

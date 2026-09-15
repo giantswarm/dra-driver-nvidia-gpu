@@ -46,7 +46,7 @@ func NewProcessManager(cmd []string) *ProcessManager {
 	return m
 }
 
-// Restart() starts or restarts the process.
+// Restart starts or restarts the process.
 func (m *ProcessManager) Restart() error {
 	if m.handle != nil {
 		if err := m.stop(); err != nil {
@@ -54,6 +54,29 @@ func (m *ProcessManager) Restart() error {
 		}
 	}
 	return m.start()
+}
+
+// EnsureStarted starts the process if it is not already running. If the process
+// is already started, this is a no-op. The boolean return value indicates
+// `new`, i.e. it is `true` if the process was _newly_ started. It must be
+// ignored when the returned error is non-nil.
+func (m *ProcessManager) EnsureStarted() (bool, error) {
+	if m.handle != nil {
+		return false, nil
+	}
+	return true, m.start()
+}
+
+// Signal() attempts to send the provided signal to the managed child process.
+// Any error is emitted to the caller and must be handled there.
+func (m *ProcessManager) Signal(s os.Signal) error {
+	m.Lock()
+	defer m.Unlock()
+
+	if m.handle == nil {
+		return fmt.Errorf("pm: sending signal %s failed: not started", s)
+	}
+	return m.handle.Process.Signal(s)
 }
 
 func (m *ProcessManager) start() error {
@@ -178,8 +201,7 @@ func (m *ProcessManager) Watchdog(ctx context.Context) error {
 	}
 }
 
-// Detect if process terminated unexpectedly. Caller must ignore bool if err
-// isn't nil.
+// Detect if process terminated unexpectedly.
 func (m *ProcessManager) lost() bool {
 	if !m.TryLock() {
 		// Start or stop is in progress; do not inspect state.

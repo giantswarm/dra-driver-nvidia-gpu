@@ -32,6 +32,8 @@ import (
 	cdispec "tags.cncf.io/container-device-interface/specs-go"
 
 	nvapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
+	"github.com/NVIDIA/k8s-dra-driver-gpu/internal/common"
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
 	nvinformers "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/nvidia.com/informers/externalversions"
 )
 
@@ -41,7 +43,7 @@ const (
 	informerResyncPeriod = 10 * time.Minute
 	cleanupInterval      = 10 * time.Minute
 
-	ComputeDomainDaemonSettingsRoot       = DriverPluginPath + "/domains"
+	ComputeDomainDaemonConfigFilesDirName = "domains"
 	ComputeDomainDaemonConfigTemplatePath = "/templates/compute-domain-daemon-config.tmpl.cfg"
 )
 
@@ -59,15 +61,16 @@ type ComputeDomainManager struct {
 
 type ComputeDomainDaemonSettings struct {
 	manager         *ComputeDomainManager
-	domain          string
+	domainID        string
 	rootDir         string
 	configTmplPath  string
 	nodesConfigPath string
 }
 
-func NewComputeDomainManager(config *Config, configFilesRoot, cliqueID string) *ComputeDomainManager {
+func NewComputeDomainManager(config *Config, cliqueID string) *ComputeDomainManager {
 	factory := nvinformers.NewSharedInformerFactory(config.clientsets.Nvidia, informerResyncPeriod)
 	informer := factory.Resource().V1beta1().ComputeDomains().Informer()
+	configFilesRoot := filepath.Join(config.DriverPluginPath(), ComputeDomainDaemonConfigFilesDirName)
 
 	m := &ComputeDomainManager{
 		config:          config,
@@ -119,47 +122,41 @@ func (m *ComputeDomainManager) Start(ctx context.Context) (rerr error) {
 }
 
 func (m *ComputeDomainManager) Stop() error {
-	m.cancelContext()
+	if m.cancelContext != nil {
+		m.cancelContext()
+	}
 	m.waitGroup.Wait()
 	return nil
 }
 
-func (m *ComputeDomainManager) NewSettings(domain string) *ComputeDomainDaemonSettings {
+func (m *ComputeDomainManager) NewSettings(domainID string) *ComputeDomainDaemonSettings {
 	return &ComputeDomainDaemonSettings{
 		manager:         m,
-		domain:          domain,
-		rootDir:         fmt.Sprintf("%s/%s", m.configFilesRoot, domain),
-		configTmplPath:  fmt.Sprintf("%s/%s/%s", m.configFilesRoot, domain, "config.tmpl.cfg"),
-		nodesConfigPath: fmt.Sprintf("%s/%s/%s", m.configFilesRoot, domain, "nodes_config.cfg"),
+		domainID:        domainID,
+		rootDir:         fmt.Sprintf("%s/%s", m.configFilesRoot, domainID),
+		configTmplPath:  fmt.Sprintf("%s/%s/%s", m.configFilesRoot, domainID, "imexd.cfg.tmpl"),
+		nodesConfigPath: fmt.Sprintf("%s/%s/%s", m.configFilesRoot, domainID, "nodes.cfg"),
 	}
 }
 
-func (m *ComputeDomainManager) GetComputeDomainChannelContainerEdits(devRoot string, info *ComputeDomainChannelInfo) *cdiapi.ContainerEdits {
-	channelPath := fmt.Sprintf("/dev/nvidia-caps-imex-channels/channel%d", info.ID)
-
+func (m *ComputeDomainManager) GetComputeDomainChannelContainerEdits(devRoot string, info *common.NVcapDeviceInfo) *cdiapi.ContainerEdits {
 	return &cdiapi.ContainerEdits{
 		ContainerEdits: &cdispec.ContainerEdits{
-			DeviceNodes: []*cdispec.DeviceNode{
-				{
-					Path:     channelPath,
-					HostPath: filepath.Join(devRoot, channelPath),
-				},
-			},
+			DeviceNodes: []*cdispec.DeviceNode{info.CDICharDevNode()},
 		},
 	}
 }
 
-func (s *ComputeDomainDaemonSettings) GetDomain() string {
-	return s.domain
-}
-
-func (s *ComputeDomainDaemonSettings) GetCDIContainerEdits(ctx context.Context, devRoot string, info *nvcapDeviceInfo) (*cdiapi.ContainerEdits, error) {
-	cd, err := s.manager.GetComputeDomain(ctx, s.domain)
+// GetCDIContainerEditsCommon() returns the CDI spec edits always required for
+// launching the CD Daemon (whether or not it tries to launch an IMEX daemon
+// internally).
+func (s *ComputeDomainDaemonSettings) GetCDIContainerEditsCommon(ctx context.Context) (*cdiapi.ContainerEdits, error) {
+	cd, err := s.manager.GetComputeDomain(ctx, s.domainID)
 	if err != nil {
-		return nil, fmt.Errorf("error getting compute domain: %w", err)
+		return nil, fmt.Errorf("error getting compute domain %s: %w", s.domainID, err)
 	}
 	if cd == nil {
-		return nil, fmt.Errorf("compute domain not found: %s", s.domain)
+		return nil, fmt.Errorf("compute domain not found: %s", s.domainID)
 	}
 
 	edits := &cdiapi.ContainerEdits{
@@ -172,21 +169,30 @@ func (s *ComputeDomainDaemonSettings) GetCDIContainerEdits(ctx context.Context, 
 			},
 			Mounts: []*cdispec.Mount{
 				{
-					ContainerPath: "/etc/nvidia-imex",
+					// imexDaemonConfigDirPath   = "/imexd"
+					ContainerPath: "/imexd",
 					HostPath:      s.rootDir,
 					Options:       []string{"rw", "nosuid", "nodev", "bind"},
 				},
 			},
-			DeviceNodes: []*cdispec.DeviceNode{
-				{
-					Path:     info.path,
-					HostPath: filepath.Join(devRoot, info.path),
-				},
-			},
 		},
 	}
-
 	return edits, nil
+}
+
+func (s *ComputeDomainDaemonSettings) GetDomainID() string {
+	return s.domainID
+}
+
+// GetCDIContainerEditsForImex() returns the CDI spec edits only required for
+// launching the CD daemon when it actually wraps an IMEX daemon.
+func (s *ComputeDomainDaemonSettings) GetCDIContainerEditsForImex(ctx context.Context, devRoot string, info *common.NVcapDeviceInfo) *cdiapi.ContainerEdits {
+	edits := &cdiapi.ContainerEdits{
+		ContainerEdits: &cdispec.ContainerEdits{
+			DeviceNodes: []*cdispec.DeviceNode{info.CDICharDevNode()},
+		},
+	}
+	return edits
 }
 
 func (s *ComputeDomainDaemonSettings) Prepare(ctx context.Context) error {
@@ -238,11 +244,53 @@ func (m *ComputeDomainManager) AssertComputeDomainReady(ctx context.Context, cdU
 		return fmt.Errorf("ComputeDomain not found: %s", cdUID)
 	}
 
-	if cd.Status.Status != nvapi.ComputeDomainStatusReady {
-		return fmt.Errorf("ComputeDomain not Ready")
+	// Check if the current node is ready in the ComputeDomain
+	if !m.isCurrentNodeReady(ctx, cd) {
+		return fmt.Errorf("current node not ready in ComputeDomain")
 	}
 
 	return nil
+}
+
+// isCurrentNodeReady checks if the current node is marked as ready in the ComputeDomain.
+// When the feature gate is enabled, we check both the clique and the status to ensure
+// that compute domains started before the feature gate was enabled continue to work
+// even after the feature gate is enabled.
+func (m *ComputeDomainManager) isCurrentNodeReady(ctx context.Context, cd *nvapi.ComputeDomain) bool {
+	if featuregates.Enabled(featuregates.ComputeDomainCliques) {
+		if m.isCurrentNodeReadyInClique(ctx, cd) {
+			return true
+		}
+	}
+	return m.isCurrentNodeReadyInStatus(cd)
+}
+
+// isCurrentNodeReadyInStatus checks if the current node is marked as ready in the ComputeDomain status.
+func (m *ComputeDomainManager) isCurrentNodeReadyInStatus(cd *nvapi.ComputeDomain) bool {
+	for _, node := range cd.Status.Nodes {
+		if node.Name == m.config.flags.nodeName {
+			return node.Status == nvapi.ComputeDomainStatusReady
+		}
+	}
+	return false
+}
+
+// isCurrentNodeReadyInClique checks if the current node is marked as ready in the ComputeDomainClique.
+func (m *ComputeDomainManager) isCurrentNodeReadyInClique(ctx context.Context, cd *nvapi.ComputeDomain) bool {
+	cliqueName := fmt.Sprintf("%s.%s", cd.UID, m.cliqueID)
+
+	clique, err := m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomainCliques(m.config.flags.namespace).Get(ctx, cliqueName, metav1.GetOptions{})
+	if err != nil {
+		klog.Errorf("error getting ComputeDomainClique %s: %v", cliqueName, err)
+		return false
+	}
+
+	for _, daemon := range clique.Daemons {
+		if daemon.NodeName == m.config.flags.nodeName {
+			return daemon.Status == nvapi.ComputeDomainStatusReady
+		}
+	}
+	return false
 }
 
 func (m *ComputeDomainManager) AssertComputeDomainNamespace(ctx context.Context, claimNamespace, cdUID string) error {
@@ -289,6 +337,8 @@ func (m *ComputeDomainManager) AddNodeLabel(ctx context.Context, cdUID string) e
 	return nil
 }
 
+// RemoveNodeLabel() attempts removal and returns no error if the label was
+// removed or didn't exist in the first place.
 func (m *ComputeDomainManager) RemoveNodeLabel(ctx context.Context, cdUID string) error {
 	node, err := m.config.clientsets.Core.CoreV1().Nodes().Get(ctx, m.config.flags.nodeName, metav1.GetOptions{})
 	if err != nil {
@@ -338,7 +388,7 @@ func (m *ComputeDomainManager) periodicCleanup(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			klog.V(6).Infof("Running periodic sync to remove artifacts owned by stale ComputeDomain")
+			klog.V(6).Infof("Running periodic cleanup to remove stale ComputeDomain artifacts")
 
 			_, err := os.Stat(m.configFilesRoot)
 			if os.IsNotExist(err) {
@@ -360,6 +410,7 @@ func (m *ComputeDomainManager) periodicCleanup(ctx context.Context) {
 					continue
 				}
 
+				// Convention: per-CD directory with CD UID as basename
 				uid := e.Name()
 				path := filepath.Join(m.configFilesRoot, e.Name())
 
@@ -369,19 +420,15 @@ func (m *ComputeDomainManager) periodicCleanup(ctx context.Context) {
 					continue
 				}
 
+				// CD still exists, do not clean up
 				if computeDomain != nil {
 					continue
 				}
 
-				klog.Infof("Stale artifacts found for ComputeDomain '%s', running cleanup", uid)
+				klog.V(6).Infof("Stale directory found for ComputeDomain '%s', running cleanup", uid)
 
 				if err := os.RemoveAll(path); err != nil {
 					klog.Errorf("error removing artifacts directory for ComputeDomain '%s': %v", uid, err)
-					continue
-				}
-
-				if err := m.RemoveNodeLabel(ctx, uid); err != nil {
-					klog.Errorf("error removing Node label for ComputeDomain '%s': %v", uid, err)
 					continue
 				}
 			}
