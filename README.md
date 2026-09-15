@@ -42,7 +42,8 @@ For exploration and demonstration purposes, see the "demo" section below, and al
 
 ## Installation
 
-Configuration and installation instructions can for now be found [in our Wiki](https://github.com/NVIDIA/k8s-dra-driver-gpu/wiki/Installation).
+As of today, the recommended installation method is via Helm.
+Detailed instructions can (for now) be found [here](https://github.com/NVIDIA/k8s-dra-driver-gpu/discussions/249).
 In the future, this driver will be included in the [NVIDIA GPU Operator](https://github.com/NVIDIA/gpu-operator) and does not need to be installed separately anymore.
 
 ## A (kind) demo
@@ -83,7 +84,7 @@ Now you can install the DRA driver's Helm chart into the Kubernetes cluster:
 Submit workload:
 
 ```console
-kubectl apply -f ./demo/specs/quickstart/v1/gpu-test2.yaml
+kubectl apply -f ./demo/specs/quickstart/gpu-test2.yaml
 ```
 
 If you're curious, have a look at [the `ResourceClaimTemplate`](https://github.com/jgehrcke/k8s-dra-driver-gpu/blob/526130fbaa3c8f5b1f6dcfd9ef01c9bdd5c229fe/demo/specs/quickstart/gpu-test2.yaml#L12) definition in this spec, and how the corresponding _single_ `ResourceClaim` is [being referenced](https://github.com/jgehrcke/k8s-dra-driver-gpu/blob/526130fbaa3c8f5b1f6dcfd9ef01c9bdd5c229fe/demo/specs/quickstart/gpu-test2.yaml#L46) by both containers.

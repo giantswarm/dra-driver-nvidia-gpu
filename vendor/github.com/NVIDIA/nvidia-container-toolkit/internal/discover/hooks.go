@@ -31,7 +31,6 @@ const (
 	AllHooks = HookName("all")
 
 	// A ChmodHook is used to set the file mode of the specified paths.
-	//
 	// Deprecated: The chmod hook is deprecated and will be removed in a future release.
 	ChmodHook = HookName("chmod")
 	// A CreateSymlinksHook is used to create symlinks in the container.
@@ -50,14 +49,6 @@ const (
 
 	defaultNvidiaCDIHookPath = "/usr/bin/nvidia-cdi-hook"
 )
-
-// defaultDisabledHooks defines hooks that are disabled by default.
-// These hooks can be explicitly enabled using the WithEnabledHooks option.
-var defaultDisabledHooks = []HookName{
-	// ChmodHook is disabled by default as it was a workaround for older
-	// versions of crun that has since been fixed.
-	ChmodHook,
-}
 
 var _ Discover = (*Hook)(nil)
 
@@ -86,14 +77,7 @@ func (h *Hook) Hooks() ([]Hook, error) {
 	return []Hook{*h}, nil
 }
 
-type hookCreatorOptions struct {
-	nvidiaCDIHookPath string
-	disabledHooks     []HookName
-	enabledHooks      []HookName
-	debugLogging      bool
-}
-
-type Option func(*hookCreatorOptions)
+type Option func(*cdiHookCreator)
 
 type cdiHookCreator struct {
 	nvidiaCDIHookPath string
@@ -116,66 +100,39 @@ type HookCreator interface {
 	Create(HookName, ...string) *Hook
 }
 
-func WithDebugLogging(debugLogging bool) Option {
-	return func(hco *hookCreatorOptions) {
-		hco.debugLogging = debugLogging
-	}
-}
-
-// WithDisabledHooks explicitly disables the specified hooks.
+// WithDisabledHooks sets the set of hooks that are disabled for the CDI hook creator.
 // This can be specified multiple times.
 func WithDisabledHooks(hooks ...HookName) Option {
-	return func(c *hookCreatorOptions) {
-		c.disabledHooks = append(c.disabledHooks, hooks...)
-	}
-}
-
-// WithEnabledHooks explicitly enables the specified hooks.
-// This is useful for enabling hooks that are disabled by default.
-func WithEnabledHooks(hooks ...HookName) Option {
-	return func(c *hookCreatorOptions) {
-		c.enabledHooks = append(c.enabledHooks, hooks...)
+	return func(c *cdiHookCreator) {
+		for _, hook := range hooks {
+			c.disabledHooks[hook] = true
+		}
 	}
 }
 
 // WithNVIDIACDIHookPath sets the path to the nvidia-cdi-hook binary.
 func WithNVIDIACDIHookPath(nvidiaCDIHookPath string) Option {
-	return func(c *hookCreatorOptions) {
+	return func(c *cdiHookCreator) {
 		c.nvidiaCDIHookPath = nvidiaCDIHookPath
 	}
 }
 
 func NewHookCreator(opts ...Option) HookCreator {
-	o := &hookCreatorOptions{
+	cdiHookCreator := &cdiHookCreator{
 		nvidiaCDIHookPath: defaultNvidiaCDIHookPath,
+		disabledHooks:     make(map[HookName]bool),
 	}
 	for _, opt := range opts {
-		opt(o)
+		opt(cdiHookCreator)
 	}
 
-	o.disabledHooks = append(o.disabledHooks, defaultDisabledHooks...)
-
-	disabledHooks := make(map[HookName]bool)
-	for _, h := range o.disabledHooks {
-		disabledHooks[h] = true
-	}
-
-	if disabledHooks[AllHooks] && len(o.enabledHooks) == 0 {
+	if cdiHookCreator.disabledHooks[AllHooks] {
 		return &allDisabledHookCreator{}
 	}
 
-	for _, h := range o.enabledHooks {
-		disabledHooks[h] = false
-	}
+	cdiHookCreator.fixedArgs = getFixedArgsForCDIHookCLI(cdiHookCreator.nvidiaCDIHookPath)
 
-	c := &cdiHookCreator{
-		nvidiaCDIHookPath: o.nvidiaCDIHookPath,
-		disabledHooks:     disabledHooks,
-		fixedArgs:         getFixedArgsForCDIHookCLI(o.nvidiaCDIHookPath),
-		debugLogging:      o.debugLogging,
-	}
-
-	return c
+	return cdiHookCreator
 }
 
 // Create creates a new hook with the given name and arguments.
@@ -193,19 +150,21 @@ func (c cdiHookCreator) Create(name HookName, args ...string) *Hook {
 	}
 }
 
+// isDisabled checks if the specified hook name is disabled.
 func (c cdiHookCreator) isDisabled(name HookName, args ...string) bool {
-	disabled, ok := c.disabledHooks[name]
-	if ok {
-		return disabled
-	}
-	if c.disabledHooks[AllHooks] {
+	if c.disabledHooks[name] {
 		return true
 	}
 
-	// still reject hooks that require args if none were provided
 	switch name {
-	case CreateSymlinksHook, ChmodHook:
-		return len(args) == 0
+	case CreateSymlinksHook:
+		if len(args) == 0 {
+			return true
+		}
+	case ChmodHook:
+		if len(args) == 0 {
+			return true
+		}
 	}
 	return false
 }

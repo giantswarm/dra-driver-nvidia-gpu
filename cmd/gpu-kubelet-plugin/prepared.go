@@ -22,22 +22,12 @@ import (
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 )
 
-// Reflects a prepared MIG device, regardless of its origin (static MIG, or
-// dynamic MIG). This string may(?) be exposed in the API (is it, though?).
-// Before the dynamic MIG capability, we used "mig", so keep using it for now.
-// May just be an implementation detail.
-const PreparedMigDeviceType = "mig"
-
 type PreparedDeviceList []PreparedDevice
 type PreparedDevices []*PreparedDeviceGroup
 
 type PreparedDevice struct {
-	// Represents a prepared full GPU.
-	Gpu *PreparedGpu `json:"gpu"`
-	// Represents a prepared MIG device, regardless of whether this was created
-	// via the 'dynamic MIG' flow or if it is a pre-created (static) MIG device.
-	Mig  *PreparedMigDevice  `json:"mig"`
-	Vfio *PreparedVfioDevice `json:"vfio,omitempty"`
+	Gpu *PreparedGpu       `json:"gpu"`
+	Mig *PreparedMigDevice `json:"mig"`
 }
 
 type PreparedGpu struct {
@@ -46,16 +36,7 @@ type PreparedGpu struct {
 }
 
 type PreparedMigDevice struct {
-	// Specifc, created device. Detail needed for deletion and book-keeping.
-	// Note that this is either created via the 'static MIG' flow or the
-	// 'dynamic MIG' flow -- in any case, it represents a MIG device that
-	// currently exists (incarnated, concrete).
-	Concrete *MigLiveTuple         `json:"concrete"`
-	Device   *kubeletplugin.Device `json:"device"`
-}
-
-type PreparedVfioDevice struct {
-	Info   *VfioDeviceInfo       `json:"info"`
+	Info   *MigDeviceInfo        `json:"info"`
 	Device *kubeletplugin.Device `json:"device"`
 }
 
@@ -69,10 +50,7 @@ func (d PreparedDevice) Type() string {
 		return GpuDeviceType
 	}
 	if d.Mig != nil {
-		return PreparedMigDeviceType
-	}
-	if d.Vfio != nil {
-		return VfioDeviceType
+		return MigDeviceType
 	}
 	return UnknownDeviceType
 }
@@ -81,15 +59,22 @@ func (d *PreparedDevice) CanonicalName() string {
 	switch d.Type() {
 	case GpuDeviceType:
 		return d.Gpu.Info.CanonicalName()
-	case PreparedMigDeviceType:
-		return d.Mig.Device.DeviceName
-	case VfioDeviceType:
-		return d.Vfio.Info.CanonicalName()
+	case MigDeviceType:
+		return d.Mig.Info.CanonicalName()
 	}
 	panic("unexpected type for AllocatableDevice")
 }
 
-// Return only devices representing full, physical GPUs.
+func (d *PreparedDevice) CanonicalIndex() string {
+	switch d.Type() {
+	case GpuDeviceType:
+		return d.Gpu.Info.CanonicalIndex()
+	case MigDeviceType:
+		return d.Mig.Info.CanonicalIndex()
+	}
+	panic("unexpected type for AllocatableDevice")
+}
+
 func (l PreparedDeviceList) Gpus() PreparedDeviceList {
 	var devices PreparedDeviceList
 	for _, device := range l {
@@ -103,17 +88,7 @@ func (l PreparedDeviceList) Gpus() PreparedDeviceList {
 func (l PreparedDeviceList) MigDevices() PreparedDeviceList {
 	var devices PreparedDeviceList
 	for _, device := range l {
-		if device.Type() == PreparedMigDeviceType {
-			devices = append(devices, device)
-		}
-	}
-	return devices
-}
-
-func (l PreparedDeviceList) VfioDevices() PreparedDeviceList {
-	var devices PreparedDeviceList
-	for _, device := range l {
-		if device.Type() == VfioDeviceType {
+		if device.Type() == MigDeviceType {
 			devices = append(devices, device)
 		}
 	}
@@ -128,67 +103,37 @@ func (d PreparedDevices) GetDevices() []kubeletplugin.Device {
 	return devices
 }
 
-func (d PreparedDevices) GetDeviceNames() []DeviceName {
-	var names []DeviceName
-	for _, group := range d {
-		names = append(names, group.GetDeviceNames()...)
-	}
-	return names
-}
-
 func (g *PreparedDeviceGroup) GetDevices() []kubeletplugin.Device {
 	var devices []kubeletplugin.Device
 	for _, device := range g.Devices {
 		switch device.Type() {
 		case GpuDeviceType:
 			devices = append(devices, *device.Gpu.Device)
-		case PreparedMigDeviceType:
+		case MigDeviceType:
 			devices = append(devices, *device.Mig.Device)
-		case VfioDeviceType:
-			devices = append(devices, *device.Vfio.Device)
 		}
 	}
 	return devices
 }
 
-func (g *PreparedDeviceGroup) GetDeviceNames() []DeviceName {
-	var names []DeviceName
-	for _, device := range g.Devices {
-		switch device.Type() {
-		case GpuDeviceType:
-			names = append(names, device.Gpu.Info.CanonicalName())
-		case PreparedMigDeviceType:
-			names = append(names, device.Mig.Device.DeviceName)
-		}
-	}
-	return names
-}
-
-// UUIDs for full GPUs, MIG devices, and Vfio devices.
 func (l PreparedDeviceList) UUIDs() []string {
 	uuids := append(l.GpuUUIDs(), l.MigDeviceUUIDs()...)
-	uuids = append(uuids, l.VfioDeviceUUIDs()...)
 	slices.Sort(uuids)
 	return uuids
 }
 
-// UUIDs for full GPUs, MIG devices, and Vfio devices.
 func (g *PreparedDeviceGroup) UUIDs() []string {
 	uuids := append(g.GpuUUIDs(), g.MigDeviceUUIDs()...)
-	uuids = append(uuids, g.VfioDeviceUUIDs()...)
 	slices.Sort(uuids)
 	return uuids
 }
 
-// UUIDs for full GPUs, MIG devices, and Vfio devices.
 func (d PreparedDevices) UUIDs() []string {
 	uuids := append(d.GpuUUIDs(), d.MigDeviceUUIDs()...)
-	uuids = append(uuids, d.VfioDeviceUUIDs()...)
 	slices.Sort(uuids)
 	return uuids
 }
 
-// UUIDs only for full GPUs.
 func (l PreparedDeviceList) GpuUUIDs() []string {
 	var uuids []string
 	for _, device := range l.Gpus() {
@@ -214,7 +159,7 @@ func (d PreparedDevices) GpuUUIDs() []string {
 func (l PreparedDeviceList) MigDeviceUUIDs() []string {
 	var uuids []string
 	for _, device := range l.MigDevices() {
-		uuids = append(uuids, device.Mig.Concrete.MigUUID)
+		uuids = append(uuids, device.Mig.Info.UUID)
 	}
 	slices.Sort(uuids)
 	return uuids
@@ -231,46 +176,4 @@ func (d PreparedDevices) MigDeviceUUIDs() []string {
 	}
 	slices.Sort(uuids)
 	return uuids
-}
-
-func (g *PreparedDeviceGroup) VfioDeviceUUIDs() []string {
-	return g.Devices.VfioDevices().UUIDs()
-}
-
-func (l PreparedDeviceList) VfioDeviceUUIDs() []string {
-	var uuids []string
-	for _, device := range l.VfioDevices() {
-		uuids = append(uuids, device.Vfio.Info.UUID)
-	}
-	slices.Sort(uuids)
-	return uuids
-}
-
-func (d PreparedDevices) VfioDeviceUUIDs() []string {
-	var uuids []string
-	for _, group := range d {
-		uuids = append(uuids, group.VfioDeviceUUIDs()...)
-	}
-	slices.Sort(uuids)
-	return uuids
-}
-
-// GetNonAdminDevices returns a map of device names that were requested
-// without admin access in the prepared claim.
-func (c *PreparedClaim) GetNonAdminDevices() map[string]struct{} {
-	requested := make(map[string]struct{}, len(c.Status.Allocation.Devices.Results))
-
-	if c.Status.Allocation == nil {
-		return requested
-	}
-	for _, r := range c.Status.Allocation.Devices.Results {
-		if r.Driver != DriverName {
-			continue
-		}
-		if r.AdminAccess != nil && *r.AdminAccess {
-			continue
-		}
-		requested[r.Device] = struct{}{}
-	}
-	return requested
 }
