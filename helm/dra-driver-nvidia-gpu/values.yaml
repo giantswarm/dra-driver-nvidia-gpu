@@ -50,7 +50,7 @@ resourceApiVersion: ""
 
 imagePullSecrets: []
 image:
-  repository: nvcr.io/nvidia/k8s-dra-driver-gpu
+  repository: gsoci.azurecr.io/giantswarm/k8s-dra-driver-gpu
   pullPolicy: IfNotPresent
   # Note: an empty string is translated to the `appVersion` string from
   # the Helm chart YAML (effectively implementing the default value to be

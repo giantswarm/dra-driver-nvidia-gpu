@@ -14,9 +14,10 @@
 # limitations under the License.
 
 apiVersion: v2
-name: nvidia-dra-driver-gpu
+name: dra-driver-nvidia-gpu
 description: Official Helm chart for the NVIDIA DRA Driver for GPUs
 type: application
+icon: https://s.giantswarm.io/app-icons/kubernetes-gpu/1/light.svg
 
 # Note(JP): strict semver: no v prefix allowed
 version: "25.12.0"
@@ -33,3 +34,7 @@ appVersion: "25.12.0"
 # included. However, it is also required to allow a given chart to be installed
 # on GKE as they add a '-gke-*' suffix to all of their Kubernetes versions.
 kubeVersion: ">=1.32.0-0"
+
+annotations:
+  application.giantswarm.io/team: tenet
+  io.giantswarm.application.audience: all
