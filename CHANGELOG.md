@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - CI: bump the `architect` orb from 8.0.2 to 10.5.0. The 8.x `push-helm` command defaults `registry_url` to the decommissioned `giantswarmpublic.azurecr.io`, so chart pushes failed with `dial tcp: lookup giantswarmpublic.azurecr.io: no such host`. From 9.0.0 the orb selects `gsoci.azurecr.io` or `gsociprivate.azurecr.io` based on repository visibility.
+- CI: give app-build-suite's `HelmTemplateValidator` an extra values file (`.abs/helm-template-values.yaml`). The upstream chart deliberately refuses to render with defaults — `templates/validation.yaml` fails in the `default` namespace and while `resources.gpus.enabled` is true — and abs 2.3.0 (pulled in by the orb bump) renders the chart as a build step.
 
 - Sync with upstream `kubernetes-sigs/dra-driver-nvidia-gpu` v25.12.0 (was v25.3.2); upstream moved there from `NVIDIA/k8s-dra-driver-gpu`. Chart and appVersion now track upstream exactly (`25.12.0`), and `kubeVersion: >=1.32.0-0` covers the certified Kubernetes 1.35.
 
