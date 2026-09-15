@@ -31,7 +31,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/urfave/cli/v2"
 
-	"k8s.io/component-base/logs"
 	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/klog/v2"
 
@@ -39,43 +38,31 @@ import (
 	_ "k8s.io/component-base/metrics/prometheus/version"    // for version metric registration
 	_ "k8s.io/component-base/metrics/prometheus/workqueue"  // register work queues in the default legacy registry
 
-	"github.com/NVIDIA/k8s-dra-driver-gpu/internal/common"
 	"github.com/NVIDIA/k8s-dra-driver-gpu/internal/info"
-	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
-	pkgflags "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flags"
+	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flags"
 )
 
 const (
 	DriverName = "compute-domain.nvidia.com"
-
-	// This constant provides a reasonable default for the maximum size of
-	// a given IMEX Domain. On GB200 and GB300 the limit is 18, so we pick
-	// this for now. It can be overridden as an environment variable or
-	// command line argument as required.
-	defaultMaxNodesPerIMEXDomain = 18
 )
 
 type Flags struct {
-	kubeClientConfig pkgflags.KubeClientConfig
+	kubeClientConfig flags.KubeClientConfig
+	loggingConfig    *flags.LoggingConfig
 
-	podName               string
-	namespace             string
-	imageName             string
-	maxNodesPerIMEXDomain int
-	logVerbosityCDDaemon  int
+	podName   string
+	namespace string
+	imageName string
 
 	httpEndpoint string
 	metricsPath  string
 	profilePath  string
-
-	additionalNamespaces cli.StringSlice
-	klogVerbosity        int
 }
 
 type Config struct {
 	driverName string
 	flags      *Flags
-	clientsets pkgflags.ClientSets
+	clientsets flags.ClientSets
 	mux        *http.ServeMux
 }
 
@@ -87,10 +74,9 @@ func main() {
 }
 
 func newApp() *cli.App {
-	loggingConfig := pkgflags.NewLoggingConfig()
-	featureGateConfig := pkgflags.NewFeatureGateConfig()
-	flags := &Flags{}
-
+	flags := &Flags{
+		loggingConfig: flags.NewLoggingConfig(),
+	}
 	cliFlags := []cli.Flag{
 		&cli.StringFlag{
 			Name:        "pod-name",
@@ -112,20 +98,6 @@ func newApp() *cli.App {
 			Required:    true,
 			Destination: &flags.imageName,
 			EnvVars:     []string{"IMAGE_NAME"},
-		},
-		&cli.IntFlag{
-			Name:        "log-verbosity-cd-daemon",
-			Usage:       "Log verbosity for dynamically launched CD daemon pods",
-			Required:    true,
-			EnvVars:     []string{"LOG_VERBOSITY_CD_DAEMON"},
-			Destination: &flags.logVerbosityCDDaemon,
-		},
-		&cli.IntFlag{
-			Name:        "max-nodes-per-imex-domain",
-			Usage:       "The maximum number of possible nodes per IMEX domain",
-			Value:       defaultMaxNodesPerIMEXDomain,
-			EnvVars:     []string{"MAX_NODES_PER_IMEX_DOMAIN"},
-			Destination: &flags.maxNodesPerIMEXDomain,
 		},
 		&cli.StringFlag{
 			Category:    "HTTP server:",
@@ -149,17 +121,10 @@ func newApp() *cli.App {
 			Destination: &flags.profilePath,
 			EnvVars:     []string{"PPROF_PATH"},
 		},
-		&cli.StringSliceFlag{
-			Name:        "additional-namespaces",
-			Usage:       "Additional namespaces where the driver can manage resources.",
-			Destination: &flags.additionalNamespaces,
-			EnvVars:     []string{"ADDITIONAL_NAMESPACES"},
-		},
 	}
 
 	cliFlags = append(cliFlags, flags.kubeClientConfig.Flags()...)
-	cliFlags = append(cliFlags, featureGateConfig.Flags()...)
-	cliFlags = append(cliFlags, loggingConfig.Flags()...)
+	cliFlags = append(cliFlags, flags.loggingConfig.Flags()...)
 
 	app := &cli.App{
 		Name:            "compute-domain-controller",
@@ -171,24 +136,9 @@ func newApp() *cli.App {
 			if c.Args().Len() > 0 {
 				return fmt.Errorf("arguments not supported: %v", c.Args().Slice())
 			}
-			// `loggingConfig` must be applied before doing any logging
-			err := loggingConfig.Apply()
-
-			// Store klog's log verbosity setting in this program's config for
-			// later runtime inspection (it's otherwise not accessible anymore
-			// because we do not expose the raw `cliFlags`).
-			flags.klogVerbosity = int(loggingConfig.Config.Verbosity)
-			pkgflags.LogStartupConfig(flags, loggingConfig)
-			return err
+			return flags.loggingConfig.Apply()
 		},
 		Action: func(c *cli.Context) error {
-			common.StartDebugSignalHandlers()
-
-			// Validate feature gate dependencies
-			if err := featuregates.ValidateFeatureGates(); err != nil {
-				return fmt.Errorf("feature gate validation failed: %w", err)
-			}
-
 			mux := http.NewServeMux()
 
 			clientsets, err := flags.kubeClientConfig.NewClientSets()
@@ -220,25 +170,13 @@ func newApp() *cli.App {
 				errChan <- controller.Run(ctx)
 			}()
 
-			for {
-				select {
-				case <-sigs:
-					cancel()
-				case err := <-errChan:
-					cancel()
-					if err != nil {
-						return fmt.Errorf("run controller: %w", err)
-					}
-					return nil
-				}
+			<-sigs
+			cancel()
+
+			if err := <-errChan; err != nil {
+				return fmt.Errorf("run controller: %w", err)
 			}
-		},
-		After: func(c *cli.Context) error {
-			// Runs after `Action` (regardless of success/error). In urfave cli
-			// v2, the final error reported will be from either Action, Before,
-			// or After (whichever is non-nil and last executed).
-			klog.Infof("shutdown")
-			logs.FlushLogs()
+
 			return nil
 		},
 		Version: info.GetVersionString(),

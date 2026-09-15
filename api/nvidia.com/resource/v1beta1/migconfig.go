@@ -17,9 +17,9 @@
 package v1beta1
 
 import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"fmt"
 
-	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/featuregates"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -32,46 +32,32 @@ type MigDeviceConfig struct {
 
 // DefaultMigDeviceConfig provides the default Mig Device configuration.
 func DefaultMigDeviceConfig() *MigDeviceConfig {
-	config := &MigDeviceConfig{
+	return &MigDeviceConfig{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: GroupName + "/" + Version,
 			Kind:       MigDeviceConfigKind,
 		},
-	}
-
-	if featuregates.Enabled(featuregates.TimeSlicingSettings) {
-		config.Sharing = &MigDeviceSharing{
+		Sharing: &MigDeviceSharing{
 			Strategy: TimeSlicingStrategy,
-		}
+		},
 	}
-
-	return config
 }
 
 // Normalize updates a MigDeviceConfig config with implied default values based on other settings.
 func (c *MigDeviceConfig) Normalize() error {
 	if c.Sharing == nil {
-		if !featuregates.Enabled(featuregates.TimeSlicingSettings) {
-			return nil
-		}
-		c.Sharing = &MigDeviceSharing{
-			Strategy: TimeSlicingStrategy,
-		}
+		return nil
 	}
-
-	if featuregates.Enabled(featuregates.MPSSupport) {
-		if c.Sharing.Strategy == MpsStrategy && c.Sharing.MpsConfig == nil {
-			c.Sharing.MpsConfig = &MpsConfig{}
-		}
+	if c.Sharing.Strategy == MpsStrategy && c.Sharing.MpsConfig == nil {
+		c.Sharing.MpsConfig = &MpsConfig{}
 	}
-
 	return nil
 }
 
 // Validate ensures that MigDeviceConfig has a valid set of values.
 func (c *MigDeviceConfig) Validate() error {
 	if c.Sharing == nil {
-		return nil
+		return fmt.Errorf("no sharing strategy set")
 	}
 	return c.Sharing.Validate()
 }
