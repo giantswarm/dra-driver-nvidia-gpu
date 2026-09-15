@@ -21,15 +21,6 @@ import (
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/lookup"
 )
 
-// ipcMountOptions defines the mount options for IPC sockets.
-var ipcMountOptions = []string{
-	"nosuid",
-	"nodev",
-	"rbind",
-	"rprivate",
-	"noexec",
-}
-
 type ipcMounts mounts
 
 // NewIPCDiscoverer creats a discoverer for NVIDIA IPC sockets.
@@ -69,7 +60,7 @@ func NewIPCDiscoverer(logger logger.Interface, driverRoot string) (Discover, err
 	return d, nil
 }
 
-// Mounts returns the discovered mounts with IPC-specific mount options.
+// Mounts returns the discovered mounts with "noexec" added to the mount options.
 func (d *ipcMounts) Mounts() ([]Mount, error) {
 	mounts, err := (*mounts)(d).Mounts()
 	if err != nil {
@@ -79,7 +70,7 @@ func (d *ipcMounts) Mounts() ([]Mount, error) {
 	var modifiedMounts []Mount
 	for _, m := range mounts {
 		mount := m
-		mount.Options = ipcMountOptions
+		mount.Options = append(mount.Options, "noexec")
 		modifiedMounts = append(modifiedMounts, mount)
 	}
 

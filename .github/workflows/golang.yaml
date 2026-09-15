@@ -25,16 +25,16 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v4
       name: Checkout code
 
     - name: Install Go
-      uses: actions/setup-go@v6
+      uses: actions/setup-go@v5
       with:
-        go-version: ${{ inputs.golang_version }}
+        go-version: ${{ inputs.golang_versions }}
 
     - name: Lint
-      uses: golangci/golangci-lint-action@v9
+      uses: golangci/golangci-lint-action@v8
       with:
         version: latest
         args: -v --timeout 5m
@@ -55,9 +55,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
       - name: Install Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ inputs.golang_version }}
       - run: make test
@@ -67,9 +67,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
       - name: Install Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ inputs.golang_version }}
       - run: make build

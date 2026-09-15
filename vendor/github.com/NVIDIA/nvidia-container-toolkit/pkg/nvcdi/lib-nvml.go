@@ -66,9 +66,6 @@ func (l *nvmllib) DeviceSpecGenerators(ids ...string) (DeviceSpecGenerator, erro
 func (l *nvmllib) getDeviceSpecGeneratorsForIDs(ids ...string) (DeviceSpecGenerator, error) {
 	var identifiers []device.Identifier
 	for _, id := range ids {
-		if id == "none" {
-			return DeviceSpecGenerators{}, nil
-		}
 		if id == "all" {
 			return l.getDeviceSpecGeneratorsForAllDevices()
 		}
@@ -105,7 +102,7 @@ func (l *nvmllib) newDeviceSpecGeneratorFromNVMLDevice(id string, nvmlDevice nvm
 		return l.newMIGDeviceSpecGeneratorFromNVMLDevice(id, nvmlDevice)
 	}
 
-	return l.newFullGPUDeviceSpecGeneratorFromNVMLDevice(id, nvmlDevice, l.featureFlags)
+	return l.newFullGPUDeviceSpecGeneratorFromNVMLDevice(id, nvmlDevice)
 }
 
 // getDeviceSpecGeneratorsForAllDevices returns the CDI device spec generators
@@ -121,7 +118,7 @@ func (l *nvmllib) getDeviceSpecGeneratorsForAllDevices() (DeviceSpecGenerator, e
 		if isMigEnabled {
 			return nil
 		}
-		fullGPU, err := l.newFullGPUDeviceSpecGeneratorFromDevice(i, d, l.featureFlags)
+		fullGPU, err := l.newFullGPUDeviceSpecGeneratorFromDevice(i, d)
 		if err != nil {
 			return err
 		}

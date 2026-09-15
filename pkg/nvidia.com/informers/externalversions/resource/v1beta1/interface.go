@@ -26,8 +26,6 @@ import (
 type Interface interface {
 	// ComputeDomains returns a ComputeDomainInformer.
 	ComputeDomains() ComputeDomainInformer
-	// ComputeDomainCliques returns a ComputeDomainCliqueInformer.
-	ComputeDomainCliques() ComputeDomainCliqueInformer
 }
 
 type version struct {
@@ -44,9 +42,4 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 // ComputeDomains returns a ComputeDomainInformer.
 func (v *version) ComputeDomains() ComputeDomainInformer {
 	return &computeDomainInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
-}
-
-// ComputeDomainCliques returns a ComputeDomainCliqueInformer.
-func (v *version) ComputeDomainCliques() ComputeDomainCliqueInformer {
-	return &computeDomainCliqueInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }

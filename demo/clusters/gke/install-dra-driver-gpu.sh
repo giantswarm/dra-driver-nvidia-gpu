@@ -27,7 +27,6 @@ DRIVER_NAME=$(from_versions_mk "DRIVER_NAME")
 
 : ${IMAGE_REGISTRY:=ghcr.io/nvidia}
 : ${IMAGE_NAME:=${DRIVER_NAME}}
-# TODO: update to the latest tag once we remove the ubi tag suffix
 : ${IMAGE_TAG:=d1fad7ed-ubi9}
 
 helm upgrade -i --create-namespace --namespace nvidia nvidia-dra-driver-gpu ${PROJECT_DIR}/helm/dra-driver-nvidia-gpu \

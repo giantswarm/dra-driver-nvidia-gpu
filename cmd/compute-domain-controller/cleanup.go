@@ -74,9 +74,7 @@ func (m *CleanupManager[T]) Start(ctx context.Context) error {
 }
 
 func (m *CleanupManager[T]) Stop() error {
-	if m.cancelContext != nil {
-		m.cancelContext()
-	}
+	m.cancelContext()
 	m.waitGroup.Wait()
 	return nil
 }
@@ -123,7 +121,7 @@ func (m *CleanupManager[T]) cleanup(ctx context.Context) {
 			continue
 		}
 
-		klog.V(1).Infof("Cleanup: stale %T found for ComputeDomain '%s', running callback", *new(T), uid)
+		klog.Infof("Cleanup: stale %T found for ComputeDomain '%s', running callback", *new(T), uid)
 		if err := m.callback(ctx, uid); err != nil {
 			klog.Errorf("error running CleanupManager callback: %v", err)
 			continue
@@ -148,14 +146,13 @@ func (m *CleanupManager[T]) periodicCleanup(ctx context.Context) {
 	ticker := time.NewTicker(cleanupInterval)
 	defer ticker.Stop()
 
-	m.cleanup(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			if m.EnqueueCleanup() {
-				klog.V(6).Infof("Periodic cleanup requested for %T objects", *new(T))
+				klog.V(6).Infof("Periodoc cleanup requested for %T objects", *new(T))
 			}
 		}
 	}
