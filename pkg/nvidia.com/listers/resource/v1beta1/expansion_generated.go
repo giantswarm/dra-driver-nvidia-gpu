@@ -25,11 +25,3 @@ type ComputeDomainListerExpansion interface{}
 // ComputeDomainNamespaceListerExpansion allows custom methods to be added to
 // ComputeDomainNamespaceLister.
 type ComputeDomainNamespaceListerExpansion interface{}
-
-// ComputeDomainCliqueListerExpansion allows custom methods to be added to
-// ComputeDomainCliqueLister.
-type ComputeDomainCliqueListerExpansion interface{}
-
-// ComputeDomainCliqueNamespaceListerExpansion allows custom methods to be added to
-// ComputeDomainCliqueNamespaceLister.
-type ComputeDomainCliqueNamespaceListerExpansion interface{}

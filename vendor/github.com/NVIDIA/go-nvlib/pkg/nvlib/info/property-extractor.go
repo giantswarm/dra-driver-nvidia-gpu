@@ -59,7 +59,6 @@ func (i *propertyExtractor) HasNvml() (bool, string) {
 }
 
 // IsTegraSystem returns true if the system is detected as a Tegra-based system.
-//
 // Deprecated: Use HasTegraFiles instead.
 func (i *propertyExtractor) IsTegraSystem() (bool, string) {
 	return i.HasTegraFiles()
