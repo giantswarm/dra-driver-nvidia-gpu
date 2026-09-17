@@ -1,0 +1,14 @@
+# Values used only by app-build-suite's HelmTemplateValidator step.
+#
+# The upstream chart deliberately refuses to render with its defaults:
+#   * templates/validation.yaml fails in the `default` namespace unless
+#     `allowDefaultNamespace` is set, and abs renders without `--namespace`.
+#   * `resources.gpus.enabled` defaults to true, which the same template
+#     rejects until KEP 5004 is GA, unless `gpuResourcesEnabledOverride` is
+#     also set -- the DRA driver must not run alongside the standard GPU
+#     device plugin on the same node.
+#
+# These are the values Giant Swarm actually ships for GPU allocation, so the
+# validator renders the real configuration rather than a degraded one.
+allowDefaultNamespace: true
+gpuResourcesEnabledOverride: true

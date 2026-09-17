@@ -1,0 +1,26 @@
+version: 2.1
+orbs:
+  architect: giantswarm/architect@10.5.0
+
+workflows:
+  package-and-push-chart-on-tag:
+    jobs:
+    - architect/push-to-app-catalog:
+        context: architect
+        executor: app-build-suite
+        name: package and push dra-driver-nvidia-gpu chart
+        app_catalog: giantswarm-catalog
+        app_catalog_test: giantswarm-test-catalog
+        chart: dra-driver-nvidia-gpu
+        # Keep the appVersion declared in Chart.yaml. abs otherwise stamps it with the
+        # build version, and the chart derives its image tag from appVersion, so dev
+        # builds would request a k8s-dra-driver-gpu tag that was never built.
+        override_app_version: false
+        # Trigger job on git tag.
+        filters:
+          tags:
+            only: /^v.*/
+          branches:
+            ignore:
+            - main
+            - master

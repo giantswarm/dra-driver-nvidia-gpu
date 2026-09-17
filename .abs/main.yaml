@@ -1,0 +1,6 @@
+replace-chart-version-with-git: true
+generate-metadata: true
+chart-dir: ./helm/dra-driver-nvidia-gpu
+destination: ./build
+disable-giantswarm-helm-validator: true
+helm-template-extra-values: .abs/helm-template-values.yaml

@@ -59,7 +59,8 @@ resourceApiVersion: ""
 
 imagePullSecrets: []
 image:
-  repository: registry.k8s.io/dra-driver-nvidia/dra-driver-nvidia-gpu
+  # Giant Swarm mirror of upstream's registry.k8s.io/dra-driver-nvidia/dra-driver-nvidia-gpu.
+  repository: gsoci.azurecr.io/giantswarm/k8s-dra-driver-gpu
   pullPolicy: IfNotPresent
   # Note: an empty string is translated to the `appVersion` string from
   # the Helm chart YAML (effectively implementing the default value to be
@@ -270,8 +271,14 @@ controller:
           topologyKey: kubernetes.io/hostname
   # Network policy settings
   networkPolicy:
-    # If the network policy is enabled or not
-    enabled: false
+    # If the network policy is enabled or not.
+    #
+    # Giant Swarm default: true. Upstream defaults this to false, but Giant
+    # Swarm clusters run a `default-deny-all` NetworkPolicy in `kube-system`,
+    # so without this the kubelet plugin cannot reach the API server and never
+    # publishes any ResourceSlice -- the driver comes up "healthy" and silently
+    # allocates nothing.
+    enabled: true
 
 kubeletPlugin:
   metrics:
@@ -352,5 +359,11 @@ kubeletPlugin:
             - "true"
   # Network policy settings
   networkPolicy:
-    # If the network policy is enabled or not
-    enabled: false
+    # If the network policy is enabled or not.
+    #
+    # Giant Swarm default: true. Upstream defaults this to false, but Giant
+    # Swarm clusters run a `default-deny-all` NetworkPolicy in `kube-system`,
+    # so without this the kubelet plugin cannot reach the API server and never
+    # publishes any ResourceSlice -- the driver comes up "healthy" and silently
+    # allocates nothing.
+    enabled: true
