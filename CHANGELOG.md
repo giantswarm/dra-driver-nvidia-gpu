@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Chart version is now decoupled from `appVersion` and continues the Giant Swarm line at
+  **26.0.0**, while `appVersion` tracks upstream at `0.5.0`. Upstream re-versioned from
+  calendar versions to semver, but this chart is published at `25.3.2-flatcar.1`, and under
+  semver `0.5.0 < 25.3.2` — following upstream's number would make the catalog treat this as
+  older than what clusters already run and never offer it as an upgrade. `26.0.0` rather than
+  `25.4.0` because the release is breaking (see Removed, and the driver-570 requirement below).
+  The image tag still derives from `appVersion`, so it resolves to `v0.5.0` as intended.
+
 - Sync with upstream `kubernetes-sigs/dra-driver-nvidia-gpu` **v0.5.0** (was v25.3.2). Upstream
   moved from `NVIDIA/k8s-dra-driver-gpu` to `kubernetes-sigs/`, then re-versioned from calendar
   versions to semver — v25.12.0 was followed by v0.4.0, v0.4.1 and v0.5.0, so v0.5.0 is the
@@ -51,6 +59,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   build version made dev builds request an image tag that was never built.
 
 ### Removed
+
+- Drop five workflows inherited from the upstream tree that only make sense in upstream's
+  repository: `stale.yml` and `issue-triage.yml` (upstream's bots, which would start labelling
+  and closing Giant Swarm issues), `release-automation.yml` (cuts releases from a `VERSION`
+  file — Giant Swarm releases via CircleCI and the architect orb), `mock-nvml-e2e.yaml` (runs
+  on paths like `deployments/**` and `tests/**` that this fork no longer has) and `tests.yaml`
+  (a stub whose only job reports that bats runs on upstream's Prow cluster). `helm.yaml` is
+  kept — `basic-checks.yaml` calls it, and its `make helm-lint` target already follows the
+  chart to `helm/`.
 
 - Drop the downstream Flatcar patch series: upstream now searches `/opt/bin` for `nvidia-smi` in
   both `cmd/*/root.go` and `hack/kubelet-plugin-prestart.sh` and follows symlinks when resolving
