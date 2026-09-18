@@ -130,6 +130,14 @@ func nvmlSystemGetDriverBranch(BranchInfo *SystemDriverBranchInfo, Length uint32
 	return __v
 }
 
+// nvmlSystemGetCPER_v1 function as declared in nvml/nvml.h
+func nvmlSystemGetCPER_v1(Cper *GetCPER_v1) Return {
+	cCper, _ := (*C.nvmlGetCPER_v1_t)(unsafe.Pointer(Cper)), cgoAllocsUnknown
+	__ret := C.nvmlSystemGetCPER_v1(cCper)
+	__v := (Return)(__ret)
+	return __v
+}
+
 // nvmlUnitGetCount function as declared in nvml/nvml.h
 func nvmlUnitGetCount(UnitCount *uint32) Return {
 	cUnitCount, _ := (*C.uint)(unsafe.Pointer(UnitCount)), cgoAllocsUnknown
@@ -378,6 +386,33 @@ func nvmlDeviceGetNumaNodeId(nvmlDevice nvmlDevice, Node *uint32) Return {
 	return __v
 }
 
+// nvmlDeviceGetAddressingMode function as declared in nvml/nvml.h
+func nvmlDeviceGetAddressingMode(nvmlDevice nvmlDevice, Mode *DeviceAddressingMode) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cMode, _ := (*C.nvmlDeviceAddressingMode_t)(unsafe.Pointer(Mode)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceGetAddressingMode(cnvmlDevice, cMode)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlDeviceGetRepairStatus function as declared in nvml/nvml.h
+func nvmlDeviceGetRepairStatus(nvmlDevice nvmlDevice, RepairStatus *RepairStatus) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cRepairStatus, _ := (*C.nvmlRepairStatus_t)(unsafe.Pointer(RepairStatus)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceGetRepairStatus(cnvmlDevice, cRepairStatus)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlDeviceGetUnrepairableMemoryFlag_v1 function as declared in nvml/nvml.h
+func nvmlDeviceGetUnrepairableMemoryFlag_v1(nvmlDevice nvmlDevice, UnrepairableMemoryStatus *UnrepairableMemoryStatus_v1) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cUnrepairableMemoryStatus, _ := (*C.nvmlUnrepairableMemoryStatus_v1_t)(unsafe.Pointer(UnrepairableMemoryStatus)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceGetUnrepairableMemoryFlag_v1(cnvmlDevice, cUnrepairableMemoryStatus)
+	__v := (Return)(__ret)
+	return __v
+}
+
 // nvmlDeviceGetTopologyCommonAncestor function as declared in nvml/nvml.h
 func nvmlDeviceGetTopologyCommonAncestor(Device1 nvmlDevice, Device2 nvmlDevice, PathInfo *GpuTopologyLevel) Return {
 	cDevice1, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&Device1)), cgoAllocsUnknown
@@ -483,6 +518,15 @@ func nvmlDeviceGetLastBBXFlushTime(nvmlDevice nvmlDevice, Timestamp *uint64, Dur
 	cTimestamp, _ := (*C.ulonglong)(unsafe.Pointer(Timestamp)), cgoAllocsUnknown
 	cDurationUs, _ := (*C.ulong)(unsafe.Pointer(DurationUs)), cgoAllocsUnknown
 	__ret := C.nvmlDeviceGetLastBBXFlushTime(cnvmlDevice, cTimestamp, cDurationUs)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlDeviceGetBBXTimeData_v1 function as declared in nvml/nvml.h
+func nvmlDeviceGetBBXTimeData_v1(nvmlDevice nvmlDevice, TimeData *BBXTimeData_v1) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cTimeData, _ := (*C.nvmlBBXTimeData_v1_t)(unsafe.Pointer(TimeData)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceGetBBXTimeData_v1(cnvmlDevice, cTimeData)
 	__v := (Return)(__ret)
 	return __v
 }
@@ -1013,6 +1057,24 @@ func nvmlDeviceGetPowerUsage(nvmlDevice nvmlDevice, Power *uint32) Return {
 	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
 	cPower, _ := (*C.uint)(unsafe.Pointer(Power)), cgoAllocsUnknown
 	__ret := C.nvmlDeviceGetPowerUsage(cnvmlDevice, cPower)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlDeviceGetPowerMizerMode_v1 function as declared in nvml/nvml.h
+func nvmlDeviceGetPowerMizerMode_v1(nvmlDevice nvmlDevice, PowerMizerMode *DevicePowerMizerModes_v1) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cPowerMizerMode, _ := (*C.nvmlDevicePowerMizerModes_v1_t)(unsafe.Pointer(PowerMizerMode)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceGetPowerMizerMode_v1(cnvmlDevice, cPowerMizerMode)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlDeviceSetPowerMizerMode_v1 function as declared in nvml/nvml.h
+func nvmlDeviceSetPowerMizerMode_v1(nvmlDevice nvmlDevice, PowerMizerMode *DevicePowerMizerModes_v1) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cPowerMizerMode, _ := (*C.nvmlDevicePowerMizerModes_v1_t)(unsafe.Pointer(PowerMizerMode)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceSetPowerMizerMode_v1(cnvmlDevice, cPowerMizerMode)
 	__v := (Return)(__ret)
 	return __v
 }
@@ -1610,6 +1672,15 @@ func nvmlDeviceGetSramEccErrorStatus(nvmlDevice nvmlDevice, Status *EccSramError
 	return __v
 }
 
+// nvmlDeviceSetPowerManagementLimit_v2 function as declared in nvml/nvml.h
+func nvmlDeviceSetPowerManagementLimit_v2(nvmlDevice nvmlDevice, PowerValue *PowerValue_v2) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cPowerValue, _ := (*C.nvmlPowerValue_v2_t)(unsafe.Pointer(PowerValue)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceSetPowerManagementLimit_v2(cnvmlDevice, cPowerValue)
+	__v := (Return)(__ret)
+	return __v
+}
+
 // nvmlDeviceGetAccountingMode function as declared in nvml/nvml.h
 func nvmlDeviceGetAccountingMode(nvmlDevice nvmlDevice, Mode *EnableState) Return {
 	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
@@ -1644,6 +1715,15 @@ func nvmlDeviceGetAccountingBufferSize(nvmlDevice nvmlDevice, BufferSize *uint32
 	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
 	cBufferSize, _ := (*C.uint)(unsafe.Pointer(BufferSize)), cgoAllocsUnknown
 	__ret := C.nvmlDeviceGetAccountingBufferSize(cnvmlDevice, cBufferSize)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlDeviceGetAccountingStats_v2 function as declared in nvml/nvml.h
+func nvmlDeviceGetAccountingStats_v2(nvmlDevice nvmlDevice, Stats *AccountingStats_v2) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cStats, _ := (*C.nvmlAccountingStats_v2_t)(unsafe.Pointer(Stats)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceGetAccountingStats_v2(cnvmlDevice, cStats)
 	__v := (Return)(__ret)
 	return __v
 }
@@ -1744,6 +1824,33 @@ func nvmlDeviceGetPlatformInfo(nvmlDevice nvmlDevice, PlatformInfo *PlatformInfo
 	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
 	cPlatformInfo, _ := (*C.nvmlPlatformInfo_t)(unsafe.Pointer(PlatformInfo)), cgoAllocsUnknown
 	__ret := C.nvmlDeviceGetPlatformInfo(cnvmlDevice, cPlatformInfo)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlDeviceGetPdi function as declared in nvml/nvml.h
+func nvmlDeviceGetPdi(nvmlDevice nvmlDevice, Pdi *Pdi) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cPdi, _ := (*C.nvmlPdi_t)(unsafe.Pointer(Pdi)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceGetPdi(cnvmlDevice, cPdi)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlDeviceSetHostname_v1 function as declared in nvml/nvml.h
+func nvmlDeviceSetHostname_v1(nvmlDevice nvmlDevice, Hostname *Hostname_v1) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cHostname, _ := (*C.nvmlHostname_v1_t)(unsafe.Pointer(Hostname)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceSetHostname_v1(cnvmlDevice, cHostname)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlDeviceGetHostname_v1 function as declared in nvml/nvml.h
+func nvmlDeviceGetHostname_v1(nvmlDevice nvmlDevice, Hostname *Hostname_v1) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cHostname, _ := (*C.nvmlHostname_v1_t)(unsafe.Pointer(Hostname)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceGetHostname_v1(cnvmlDevice, cHostname)
 	__v := (Return)(__ret)
 	return __v
 }
@@ -1978,15 +2085,6 @@ func nvmlDeviceClearAccountingPids(nvmlDevice nvmlDevice) Return {
 	return __v
 }
 
-// nvmlDeviceSetPowerManagementLimit_v2 function as declared in nvml/nvml.h
-func nvmlDeviceSetPowerManagementLimit_v2(nvmlDevice nvmlDevice, PowerValue *PowerValue_v2) Return {
-	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
-	cPowerValue, _ := (*C.nvmlPowerValue_v2_t)(unsafe.Pointer(PowerValue)), cgoAllocsUnknown
-	__ret := C.nvmlDeviceSetPowerManagementLimit_v2(cnvmlDevice, cPowerValue)
-	__v := (Return)(__ret)
-	return __v
-}
-
 // nvmlDeviceGetNvLinkState function as declared in nvml/nvml.h
 func nvmlDeviceGetNvLinkState(nvmlDevice nvmlDevice, Link uint32, IsActive *EnableState) Return {
 	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
@@ -2162,6 +2260,15 @@ func nvmlDeviceSetNvlinkBwMode(nvmlDevice nvmlDevice, SetBwMode *NvlinkSetBwMode
 	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
 	cSetBwMode, _ := (*C.nvmlNvlinkSetBwMode_t)(unsafe.Pointer(SetBwMode)), cgoAllocsUnknown
 	__ret := C.nvmlDeviceSetNvlinkBwMode(cnvmlDevice, cSetBwMode)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlDeviceGetNvLinkInfo function as declared in nvml/nvml.h
+func nvmlDeviceGetNvLinkInfo(nvmlDevice nvmlDevice, Info *NvLinkInfo) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cInfo, _ := (*C.nvmlNvLinkInfo_t)(unsafe.Pointer(Info)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceGetNvLinkInfo(cnvmlDevice, cInfo)
 	__v := (Return)(__ret)
 	return __v
 }
@@ -2406,6 +2513,14 @@ func nvmlDeviceSetVgpuCapabilities(nvmlDevice nvmlDevice, Capability DeviceVgpuC
 	cCapability, _ := (C.nvmlDeviceVgpuCapability_t)(Capability), cgoAllocsUnknown
 	cState, _ := (C.nvmlEnableState_t)(State), cgoAllocsUnknown
 	__ret := C.nvmlDeviceSetVgpuCapabilities(cnvmlDevice, cCapability, cState)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlDeviceVgpuForceGspUnload function as declared in nvml/nvml.h
+func nvmlDeviceVgpuForceGspUnload(nvmlDevice nvmlDevice) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceVgpuForceGspUnload(cnvmlDevice)
 	__v := (Return)(__ret)
 	return __v
 }
@@ -2836,6 +2951,60 @@ func nvmlGpuInstanceSetVgpuHeterogeneousMode(nvmlGpuInstance nvmlGpuInstance, PH
 	return __v
 }
 
+// nvmlDeviceGetVgpuSchedulerState_v2 function as declared in nvml/nvml.h
+func nvmlDeviceGetVgpuSchedulerState_v2(nvmlDevice nvmlDevice, PSchedulerStateInfo *VgpuSchedulerStateInfo_v2) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cPSchedulerStateInfo, _ := (*C.nvmlVgpuSchedulerStateInfo_v2_t)(unsafe.Pointer(PSchedulerStateInfo)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceGetVgpuSchedulerState_v2(cnvmlDevice, cPSchedulerStateInfo)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlGpuInstanceGetVgpuSchedulerState_v2 function as declared in nvml/nvml.h
+func nvmlGpuInstanceGetVgpuSchedulerState_v2(nvmlGpuInstance nvmlGpuInstance, PSchedulerStateInfo *VgpuSchedulerStateInfo_v2) Return {
+	cnvmlGpuInstance, _ := *(*C.nvmlGpuInstance_t)(unsafe.Pointer(&nvmlGpuInstance)), cgoAllocsUnknown
+	cPSchedulerStateInfo, _ := (*C.nvmlVgpuSchedulerStateInfo_v2_t)(unsafe.Pointer(PSchedulerStateInfo)), cgoAllocsUnknown
+	__ret := C.nvmlGpuInstanceGetVgpuSchedulerState_v2(cnvmlGpuInstance, cPSchedulerStateInfo)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlDeviceGetVgpuSchedulerLog_v2 function as declared in nvml/nvml.h
+func nvmlDeviceGetVgpuSchedulerLog_v2(nvmlDevice nvmlDevice, PSchedulerLogInfo *VgpuSchedulerLogInfo_v2) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cPSchedulerLogInfo, _ := (*C.nvmlVgpuSchedulerLogInfo_v2_t)(unsafe.Pointer(PSchedulerLogInfo)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceGetVgpuSchedulerLog_v2(cnvmlDevice, cPSchedulerLogInfo)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlGpuInstanceGetVgpuSchedulerLog_v2 function as declared in nvml/nvml.h
+func nvmlGpuInstanceGetVgpuSchedulerLog_v2(nvmlGpuInstance nvmlGpuInstance, PSchedulerLogInfo *VgpuSchedulerLogInfo_v2) Return {
+	cnvmlGpuInstance, _ := *(*C.nvmlGpuInstance_t)(unsafe.Pointer(&nvmlGpuInstance)), cgoAllocsUnknown
+	cPSchedulerLogInfo, _ := (*C.nvmlVgpuSchedulerLogInfo_v2_t)(unsafe.Pointer(PSchedulerLogInfo)), cgoAllocsUnknown
+	__ret := C.nvmlGpuInstanceGetVgpuSchedulerLog_v2(cnvmlGpuInstance, cPSchedulerLogInfo)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlDeviceSetVgpuSchedulerState_v2 function as declared in nvml/nvml.h
+func nvmlDeviceSetVgpuSchedulerState_v2(nvmlDevice nvmlDevice, PSchedulerState *VgpuSchedulerState_v2) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cPSchedulerState, _ := (*C.nvmlVgpuSchedulerState_v2_t)(unsafe.Pointer(PSchedulerState)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceSetVgpuSchedulerState_v2(cnvmlDevice, cPSchedulerState)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlGpuInstanceSetVgpuSchedulerState_v2 function as declared in nvml/nvml.h
+func nvmlGpuInstanceSetVgpuSchedulerState_v2(nvmlGpuInstance nvmlGpuInstance, PSchedulerState *VgpuSchedulerState_v2) Return {
+	cnvmlGpuInstance, _ := *(*C.nvmlGpuInstance_t)(unsafe.Pointer(&nvmlGpuInstance)), cgoAllocsUnknown
+	cPSchedulerState, _ := (*C.nvmlVgpuSchedulerState_v2_t)(unsafe.Pointer(PSchedulerState)), cgoAllocsUnknown
+	__ret := C.nvmlGpuInstanceSetVgpuSchedulerState_v2(cnvmlGpuInstance, cPSchedulerState)
+	__v := (Return)(__ret)
+	return __v
+}
+
 // nvmlVgpuInstanceGetMetadata function as declared in nvml/nvml.h
 func nvmlVgpuInstanceGetMetadata(nvmlVgpuInstance nvmlVgpuInstance, nvmlVgpuMetadata *nvmlVgpuMetadata, BufferSize *uint32) Return {
 	cnvmlVgpuInstance, _ := (C.nvmlVgpuInstance_t)(nvmlVgpuInstance), cgoAllocsUnknown
@@ -2894,20 +3063,20 @@ func nvmlDeviceGetVgpuSchedulerState(nvmlDevice nvmlDevice, PSchedulerState *Vgp
 	return __v
 }
 
-// nvmlDeviceGetVgpuSchedulerCapabilities function as declared in nvml/nvml.h
-func nvmlDeviceGetVgpuSchedulerCapabilities(nvmlDevice nvmlDevice, PCapabilities *VgpuSchedulerCapabilities) Return {
-	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
-	cPCapabilities, _ := (*C.nvmlVgpuSchedulerCapabilities_t)(unsafe.Pointer(PCapabilities)), cgoAllocsUnknown
-	__ret := C.nvmlDeviceGetVgpuSchedulerCapabilities(cnvmlDevice, cPCapabilities)
-	__v := (Return)(__ret)
-	return __v
-}
-
 // nvmlDeviceSetVgpuSchedulerState function as declared in nvml/nvml.h
 func nvmlDeviceSetVgpuSchedulerState(nvmlDevice nvmlDevice, PSchedulerState *VgpuSchedulerSetState) Return {
 	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
 	cPSchedulerState, _ := (*C.nvmlVgpuSchedulerSetState_t)(unsafe.Pointer(PSchedulerState)), cgoAllocsUnknown
 	__ret := C.nvmlDeviceSetVgpuSchedulerState(cnvmlDevice, cPSchedulerState)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlDeviceGetVgpuSchedulerCapabilities function as declared in nvml/nvml.h
+func nvmlDeviceGetVgpuSchedulerCapabilities(nvmlDevice nvmlDevice, PCapabilities *VgpuSchedulerCapabilities) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cPCapabilities, _ := (*C.nvmlVgpuSchedulerCapabilities_t)(unsafe.Pointer(PCapabilities)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceGetVgpuSchedulerCapabilities(cnvmlDevice, cPCapabilities)
 	__v := (Return)(__ret)
 	return __v
 }
@@ -3033,6 +3202,24 @@ func nvmlGetExcludedDeviceInfoByIndex(Index uint32, Info *ExcludedDeviceInfo) Re
 	return __v
 }
 
+// nvmlDeviceReadWritePRM_v1 function as declared in nvml/nvml.h
+func nvmlDeviceReadWritePRM_v1(nvmlDevice nvmlDevice, Buffer *PRMTLV_v1) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cBuffer, _ := (*C.nvmlPRMTLV_v1_t)(unsafe.Pointer(Buffer)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceReadWritePRM_v1(cnvmlDevice, cBuffer)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlDeviceReadPRMCounters_v1 function as declared in nvml/nvml.h
+func nvmlDeviceReadPRMCounters_v1(nvmlDevice nvmlDevice, CounterList *PRMCounterList_v1) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cCounterList, _ := (*C.nvmlPRMCounterList_v1_t)(unsafe.Pointer(CounterList)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceReadPRMCounters_v1(cnvmlDevice, cCounterList)
+	__v := (Return)(__ret)
+	return __v
+}
+
 // nvmlDeviceSetMigMode function as declared in nvml/nvml.h
 func nvmlDeviceSetMigMode(nvmlDevice nvmlDevice, Mode uint32, ActivationStatus *Return) Return {
 	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
@@ -3069,6 +3256,16 @@ func nvmlDeviceGetGpuInstanceProfileInfoV(nvmlDevice nvmlDevice, Profile uint32,
 	cProfile, _ := (C.uint)(Profile), cgoAllocsUnknown
 	cInfo, _ := (*C.nvmlGpuInstanceProfileInfo_v2_t)(unsafe.Pointer(Info)), cgoAllocsUnknown
 	__ret := C.nvmlDeviceGetGpuInstanceProfileInfoV(cnvmlDevice, cProfile, cInfo)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlDeviceGetGpuInstanceProfileInfoByIdV function as declared in nvml/nvml.h
+func nvmlDeviceGetGpuInstanceProfileInfoByIdV(nvmlDevice nvmlDevice, ProfileId uint32, Info *GpuInstanceProfileInfo_v2) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cProfileId, _ := (C.uint)(ProfileId), cgoAllocsUnknown
+	cInfo, _ := (*C.nvmlGpuInstanceProfileInfo_v2_t)(unsafe.Pointer(Info)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceGetGpuInstanceProfileInfoByIdV(cnvmlDevice, cProfileId, cInfo)
 	__v := (Return)(__ret)
 	return __v
 }
@@ -3425,6 +3622,15 @@ func nvmlDeviceWorkloadPowerProfileClearRequestedProfiles(nvmlDevice nvmlDevice,
 	return __v
 }
 
+// nvmlDeviceWorkloadPowerProfileUpdateProfiles_v1 function as declared in nvml/nvml.h
+func nvmlDeviceWorkloadPowerProfileUpdateProfiles_v1(nvmlDevice nvmlDevice, UpdateProfiles *WorkloadPowerProfileUpdateProfiles_v1) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cUpdateProfiles, _ := (*C.nvmlWorkloadPowerProfileUpdateProfiles_v1_t)(unsafe.Pointer(UpdateProfiles)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceWorkloadPowerProfileUpdateProfiles_v1(cnvmlDevice, cUpdateProfiles)
+	__v := (Return)(__ret)
+	return __v
+}
+
 // nvmlDevicePowerSmoothingActivatePresetProfile function as declared in nvml/nvml.h
 func nvmlDevicePowerSmoothingActivatePresetProfile(nvmlDevice nvmlDevice, Profile *PowerSmoothingProfile) Return {
 	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
@@ -3448,6 +3654,33 @@ func nvmlDevicePowerSmoothingSetState(nvmlDevice nvmlDevice, State *PowerSmoothi
 	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
 	cState, _ := (*C.nvmlPowerSmoothingState_t)(unsafe.Pointer(State)), cgoAllocsUnknown
 	__ret := C.nvmlDevicePowerSmoothingSetState(cnvmlDevice, cState)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlDeviceGetSramUniqueUncorrectedEccErrorCounts function as declared in nvml/nvml.h
+func nvmlDeviceGetSramUniqueUncorrectedEccErrorCounts(nvmlDevice nvmlDevice, ErrorCounts *EccSramUniqueUncorrectedErrorCounts) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cErrorCounts, _ := (*C.nvmlEccSramUniqueUncorrectedErrorCounts_t)(unsafe.Pointer(ErrorCounts)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceGetSramUniqueUncorrectedEccErrorCounts(cnvmlDevice, cErrorCounts)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlDeviceGetRemappedRows_v2 function as declared in nvml/nvml.h
+func nvmlDeviceGetRemappedRows_v2(nvmlDevice nvmlDevice, Info *RemappedRowsInfo_v2) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cInfo, _ := (*C.nvmlRemappedRowsInfo_v2_t)(unsafe.Pointer(Info)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceGetRemappedRows_v2(cnvmlDevice, cInfo)
+	__v := (Return)(__ret)
+	return __v
+}
+
+// nvmlDeviceSetRusdSettings_v1 function as declared in nvml/nvml.h
+func nvmlDeviceSetRusdSettings_v1(nvmlDevice nvmlDevice, Settings *RusdSettings_v1) Return {
+	cnvmlDevice, _ := *(*C.nvmlDevice_t)(unsafe.Pointer(&nvmlDevice)), cgoAllocsUnknown
+	cSettings, _ := (*C.nvmlRusdSettings_v1_t)(unsafe.Pointer(Settings)), cgoAllocsUnknown
+	__ret := C.nvmlDeviceSetRusdSettings_v1(cnvmlDevice, cSettings)
 	__v := (Return)(__ret)
 	return __v
 }

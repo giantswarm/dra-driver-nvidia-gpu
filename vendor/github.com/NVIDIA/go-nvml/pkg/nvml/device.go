@@ -17,6 +17,7 @@ package nvml
 import (
 	"fmt"
 	"reflect"
+	"runtime"
 	"unsafe"
 )
 
@@ -31,7 +32,7 @@ func nvmlDeviceHandle(d Device) nvmlDevice {
 			val = val.Elem()
 		}
 
-		if val.Kind() == reflect.Ptr {
+		if val.Kind() == reflect.Pointer {
 			val = val.Elem()
 		}
 
@@ -113,6 +114,8 @@ func (l *library) DeviceGetHandleByIndex(index int) (Device, Return) {
 }
 
 // nvml.DeviceGetHandleBySerial()
+//
+// Deprecated: Use DeviceGetHandleByUUID instead.
 func (l *library) DeviceGetHandleBySerial(serial string) (Device, Return) {
 	var device nvmlDevice
 	ret := nvmlDeviceGetHandleBySerial(serial+string(rune(0)), &device)
@@ -490,10 +493,13 @@ func (device nvmlDevice) GetMaxClockInfo(clockType ClockType) (uint32, Return) {
 }
 
 // nvml.DeviceGetApplicationsClock()
+//
+// Deprecated: Applications clocks are deprecated and will be removed in CUDA 14.0.
 func (l *library) DeviceGetApplicationsClock(device Device, clockType ClockType) (uint32, Return) {
 	return device.GetApplicationsClock(clockType)
 }
 
+// Deprecated: Applications clocks are deprecated and will be removed in CUDA 14.0.
 func (device nvmlDevice) GetApplicationsClock(clockType ClockType) (uint32, Return) {
 	var clockMHz uint32
 	ret := nvmlDeviceGetApplicationsClock(device, clockType, &clockMHz)
@@ -501,10 +507,13 @@ func (device nvmlDevice) GetApplicationsClock(clockType ClockType) (uint32, Retu
 }
 
 // nvml.DeviceGetDefaultApplicationsClock()
+//
+// Deprecated: Applications clocks are deprecated and will be removed in CUDA 14.0.
 func (l *library) DeviceGetDefaultApplicationsClock(device Device, clockType ClockType) (uint32, Return) {
 	return device.GetDefaultApplicationsClock(clockType)
 }
 
+// Deprecated: Applications clocks are deprecated and will be removed in CUDA 14.0.
 func (device nvmlDevice) GetDefaultApplicationsClock(clockType ClockType) (uint32, Return) {
 	var clockMHz uint32
 	ret := nvmlDeviceGetDefaultApplicationsClock(device, clockType, &clockMHz)
@@ -512,10 +521,13 @@ func (device nvmlDevice) GetDefaultApplicationsClock(clockType ClockType) (uint3
 }
 
 // nvml.DeviceResetApplicationsClocks()
+//
+// Deprecated: Use DeviceResetMemoryLockedClocks for Memory Clocks and DeviceResetGpuLockedClocks for Graphics Clocks instead
 func (l *library) DeviceResetApplicationsClocks(device Device) Return {
 	return device.ResetApplicationsClocks()
 }
 
+// Deprecated: Use DeviceResetMemoryLockedClocks for Memory Clocks and DeviceResetGpuLockedClocks for Graphics Clocks instead
 func (device nvmlDevice) ResetApplicationsClocks() Return {
 	return nvmlDeviceResetApplicationsClocks(device)
 }
@@ -627,10 +639,13 @@ func (device nvmlDevice) GetNumFans() (int, Return) {
 }
 
 // nvml.DeviceGetTemperature()
+//
+// Deprecated: Use DeviceGetTemperatureV instead.
 func (l *library) DeviceGetTemperature(device Device, sensorType TemperatureSensors) (uint32, Return) {
 	return device.GetTemperature(sensorType)
 }
 
+// Deprecated: Use DeviceGetTemperatureV instead.
 func (device nvmlDevice) GetTemperature(sensorType TemperatureSensors) (uint32, Return) {
 	var temp uint32
 	ret := nvmlDeviceGetTemperature(device, sensorType, &temp)
@@ -671,10 +686,13 @@ func (device nvmlDevice) GetPerformanceState() (Pstates, Return) {
 }
 
 // nvml.DeviceGetCurrentClocksThrottleReasons()
+//
+// Deprecated: Use DeviceGetCurrentClocksEventReasons instead
 func (l *library) DeviceGetCurrentClocksThrottleReasons(device Device) (uint64, Return) {
 	return device.GetCurrentClocksThrottleReasons()
 }
 
+// Deprecated: Use DeviceGetCurrentClocksEventReasons instead
 func (device nvmlDevice) GetCurrentClocksThrottleReasons() (uint64, Return) {
 	var clocksThrottleReasons uint64
 	ret := nvmlDeviceGetCurrentClocksThrottleReasons(device, &clocksThrottleReasons)
@@ -682,10 +700,13 @@ func (device nvmlDevice) GetCurrentClocksThrottleReasons() (uint64, Return) {
 }
 
 // nvml.DeviceGetSupportedClocksThrottleReasons()
+//
+// Deprecated: Use DeviceGetSupportedClocksEventReasons instead
 func (l *library) DeviceGetSupportedClocksThrottleReasons(device Device) (uint64, Return) {
 	return device.GetSupportedClocksThrottleReasons()
 }
 
+// Deprecated: Use DeviceGetSupportedClocksEventReasons instead
 func (device nvmlDevice) GetSupportedClocksThrottleReasons() (uint64, Return) {
 	var supportedClocksThrottleReasons uint64
 	ret := nvmlDeviceGetSupportedClocksThrottleReasons(device, &supportedClocksThrottleReasons)
@@ -693,10 +714,13 @@ func (device nvmlDevice) GetSupportedClocksThrottleReasons() (uint64, Return) {
 }
 
 // nvml.DeviceGetPowerState()
+//
+// Deprecated: Use DeviceGetPerformanceState instead
 func (l *library) DeviceGetPowerState(device Device) (Pstates, Return) {
 	return device.GetPowerState()
 }
 
+// Deprecated: Use DeviceGetPerformanceState instead
 func (device nvmlDevice) GetPowerState() (Pstates, Return) {
 	var pState Pstates
 	ret := nvmlDeviceGetPowerState(device, &pState)
@@ -704,10 +728,13 @@ func (device nvmlDevice) GetPowerState() (Pstates, Return) {
 }
 
 // nvml.DeviceGetPowerManagementMode()
+//
+// Deprecated: This will be removed in a future version
 func (l *library) DeviceGetPowerManagementMode(device Device) (EnableState, Return) {
 	return device.GetPowerManagementMode()
 }
 
+// Deprecated: This will be removed in a future version
 func (device nvmlDevice) GetPowerManagementMode() (EnableState, Return) {
 	var mode EnableState
 	ret := nvmlDeviceGetPowerManagementMode(device, &mode)
@@ -756,6 +783,16 @@ func (device nvmlDevice) GetPowerUsage() (uint32, Return) {
 	var power uint32
 	ret := nvmlDeviceGetPowerUsage(device, &power)
 	return power, ret
+}
+
+func (l *library) DeviceGetPowerMizerMode_v1(device Device) (DevicePowerMizerModes_v1, Return) {
+	return device.GetPowerMizerMode_v1()
+}
+
+func (device nvmlDevice) GetPowerMizerMode_v1() (DevicePowerMizerModes_v1, Return) {
+	var devicePowerMizerModes DevicePowerMizerModes_v1
+	ret := nvmlDeviceGetPowerMizerMode_v1(device, &devicePowerMizerModes)
+	return devicePowerMizerModes, ret
 }
 
 // nvml.DeviceGetTotalEnergyConsumption()
@@ -881,10 +918,13 @@ func (device nvmlDevice) GetTotalEccErrors(errorType MemoryErrorType, counterTyp
 }
 
 // nvml.DeviceGetDetailedEccErrors()
+//
+// Deprecated: See DeviceGetMemoryErrorCounter
 func (l *library) DeviceGetDetailedEccErrors(device Device, errorType MemoryErrorType, counterType EccCounterType) (EccErrorCounts, Return) {
 	return device.GetDetailedEccErrors(errorType, counterType)
 }
 
+// Deprecated: See DeviceGetMemoryErrorCounter
 func (device nvmlDevice) GetDetailedEccErrors(errorType MemoryErrorType, counterType EccCounterType) (EccErrorCounts, Return) {
 	var eccCounts EccErrorCounts
 	ret := nvmlDeviceGetDetailedEccErrors(device, errorType, counterType, &eccCounts)
@@ -1257,10 +1297,13 @@ func (device nvmlDevice) GetBAR1MemoryInfo() (BAR1Memory, Return) {
 }
 
 // nvml.DeviceGetViolationStatus()
+//
+// Deprecated: Use DeviceGetFieldValues instead.
 func (l *library) DeviceGetViolationStatus(device Device, perfPolicyType PerfPolicyType) (ViolationTime, Return) {
 	return device.GetViolationStatus(perfPolicyType)
 }
 
+// Deprecated: Use DeviceGetFieldValues instead.
 func (device nvmlDevice) GetViolationStatus(perfPolicyType PerfPolicyType) (ViolationTime, Return) {
 	var violTime ViolationTime
 	ret := nvmlDeviceGetViolationStatus(device, perfPolicyType, &violTime)
@@ -1344,6 +1387,37 @@ func (device nvmlDevice) GetAccountingMode() (EnableState, Return) {
 	return mode, ret
 }
 
+func (l *library) DeviceGetPdi(device Device) (Pdi, Return) {
+	return device.GetPdi()
+}
+
+func (device nvmlDevice) GetPdi() (Pdi, Return) {
+	var pdi Pdi
+	pdi.Version = STRUCT_VERSION(pdi, 1)
+	ret := nvmlDeviceGetPdi(device, &pdi)
+	return pdi, ret
+}
+
+func (l *library) DeviceSetHostname_v1(device Device, hostName string) Return {
+	return device.SetHostname_v1(hostName)
+}
+
+func (device nvmlDevice) SetHostname_v1(hostName string) Return {
+	var hostNameReq Hostname_v1
+	stringToInt8Slice(hostName, hostNameReq.Value[:])
+	return nvmlDeviceSetHostname_v1(device, &hostNameReq)
+}
+
+func (l *library) DeviceGetHostname_v1(device Device) (string, Return) {
+	return device.GetHostname_v1()
+}
+
+func (device nvmlDevice) GetHostname_v1() (string, Return) {
+	var hostName Hostname_v1
+	ret := nvmlDeviceGetHostname_v1(device, &hostName)
+	return int8SliceToString(hostName.Value[:]), ret
+}
+
 // nvml.DeviceGetAccountingStats()
 func (l *library) DeviceGetAccountingStats(device Device, pid uint32) (AccountingStats, Return) {
 	return device.GetAccountingStats(pid)
@@ -1384,6 +1458,18 @@ func (device nvmlDevice) GetAccountingBufferSize() (int, Return) {
 	var bufferSize uint32
 	ret := nvmlDeviceGetAccountingBufferSize(device, &bufferSize)
 	return int(bufferSize), ret
+}
+
+// nvml.DeviceGetAccountingStats_v2()
+func (l *library) DeviceGetAccountingStats_v2(device Device, pid uint32) (AccountingStats_v2, Return) {
+	return device.GetAccountingStats_v2(pid)
+}
+
+func (device nvmlDevice) GetAccountingStats_v2(pid uint32) (AccountingStats_v2, Return) {
+	var stats AccountingStats_v2
+	stats.Pid = pid
+	ret := nvmlDeviceGetAccountingStats_v2(device, &stats)
+	return stats, ret
 }
 
 // nvml.DeviceGetRetiredPages()
@@ -1531,10 +1617,13 @@ func (device nvmlDevice) GetClkMonStatus() (ClkMonStatus, Return) {
 }
 
 // nvml.DeviceSetApplicationsClocks()
+//
+// Deprecated:  Use DeviceSetMemoryLockedClocks for Memory Clocks and DeviceSetGpuLockedClocks for Graphics Clocks instead
 func (l *library) DeviceSetApplicationsClocks(device Device, memClockMHz uint32, graphicsClockMHz uint32) Return {
 	return device.SetApplicationsClocks(memClockMHz, graphicsClockMHz)
 }
 
+// Deprecated:  Use DeviceSetMemoryLockedClocks for Memory Clocks and DeviceSetGpuLockedClocks for Graphics Clocks instead
 func (device nvmlDevice) SetApplicationsClocks(memClockMHz uint32, graphicsClockMHz uint32) Return {
 	return nvmlDeviceSetApplicationsClocks(device, memClockMHz, graphicsClockMHz)
 }
@@ -1546,6 +1635,15 @@ func (l *library) DeviceSetPowerManagementLimit(device Device, limit uint32) Ret
 
 func (device nvmlDevice) SetPowerManagementLimit(limit uint32) Return {
 	return nvmlDeviceSetPowerManagementLimit(device, limit)
+}
+
+// nvml.DeviceSetPowerManagementLimit_v2()
+func (l *library) DeviceSetPowerManagementLimit_v2(device Device, powerValue *PowerValue_v2) Return {
+	return device.SetPowerManagementLimit_v2(powerValue)
+}
+
+func (device nvmlDevice) SetPowerManagementLimit_v2(powerValue *PowerValue_v2) Return {
+	return nvmlDeviceSetPowerManagementLimit_v2(device, powerValue)
 }
 
 // nvml.DeviceSetGpuOperationMode()
@@ -1649,10 +1747,13 @@ func (device nvmlDevice) ResetNvLinkErrorCounters(link int) Return {
 }
 
 // nvml.DeviceSetNvLinkUtilizationControl()
+//
+// Deprecated: Setting utilization counter control is no longer supported.
 func (l *library) DeviceSetNvLinkUtilizationControl(device Device, link int, counter int, control *NvLinkUtilizationControl, reset bool) Return {
 	return device.SetNvLinkUtilizationControl(link, counter, control, reset)
 }
 
+// Deprecated: Setting utilization counter control is no longer supported.
 func (device nvmlDevice) SetNvLinkUtilizationControl(link int, counter int, control *NvLinkUtilizationControl, reset bool) Return {
 	resetValue := uint32(0)
 	if reset {
@@ -1662,10 +1763,13 @@ func (device nvmlDevice) SetNvLinkUtilizationControl(link int, counter int, cont
 }
 
 // nvml.DeviceGetNvLinkUtilizationControl()
+//
+// Deprecated: Getting utilization counter control is no longer supported.
 func (l *library) DeviceGetNvLinkUtilizationControl(device Device, link int, counter int) (NvLinkUtilizationControl, Return) {
 	return device.GetNvLinkUtilizationControl(link, counter)
 }
 
+// Deprecated: Getting utilization counter control is no longer supported.
 func (device nvmlDevice) GetNvLinkUtilizationControl(link int, counter int) (NvLinkUtilizationControl, Return) {
 	var control NvLinkUtilizationControl
 	ret := nvmlDeviceGetNvLinkUtilizationControl(device, uint32(link), uint32(counter), &control)
@@ -1673,10 +1777,13 @@ func (device nvmlDevice) GetNvLinkUtilizationControl(link int, counter int) (NvL
 }
 
 // nvml.DeviceGetNvLinkUtilizationCounter()
+//
+// Deprecated: Use DeviceGetFieldValues with NVML_FI_DEV_NVLINK_THROUGHPUT_* as field values instead.
 func (l *library) DeviceGetNvLinkUtilizationCounter(device Device, link int, counter int) (uint64, uint64, Return) {
 	return device.GetNvLinkUtilizationCounter(link, counter)
 }
 
+// Deprecated: Use DeviceGetFieldValues with NVML_FI_DEV_NVLINK_THROUGHPUT_* as field values instead.
 func (device nvmlDevice) GetNvLinkUtilizationCounter(link int, counter int) (uint64, uint64, Return) {
 	var rxCounter, txCounter uint64
 	ret := nvmlDeviceGetNvLinkUtilizationCounter(device, uint32(link), uint32(counter), &rxCounter, &txCounter)
@@ -1684,19 +1791,25 @@ func (device nvmlDevice) GetNvLinkUtilizationCounter(link int, counter int) (uin
 }
 
 // nvml.DeviceFreezeNvLinkUtilizationCounter()
+//
+// Deprecated: Freezing NVLINK utilization counters is no longer supported.
 func (l *library) DeviceFreezeNvLinkUtilizationCounter(device Device, link int, counter int, freeze EnableState) Return {
 	return device.FreezeNvLinkUtilizationCounter(link, counter, freeze)
 }
 
+// Deprecated: Freezing NVLINK utilization counters is no longer supported.
 func (device nvmlDevice) FreezeNvLinkUtilizationCounter(link int, counter int, freeze EnableState) Return {
 	return nvmlDeviceFreezeNvLinkUtilizationCounter(device, uint32(link), uint32(counter), freeze)
 }
 
 // nvml.DeviceResetNvLinkUtilizationCounter()
+//
+// Deprecated: Resetting NVLINK utilization counters is no longer supported.
 func (l *library) DeviceResetNvLinkUtilizationCounter(device Device, link int, counter int) Return {
 	return device.ResetNvLinkUtilizationCounter(link, counter)
 }
 
+// Deprecated: Resetting NVLINK utilization counters is no longer supported.
 func (device nvmlDevice) ResetNvLinkUtilizationCounter(link int, counter int) Return {
 	return nvmlDeviceResetNvLinkUtilizationCounter(device, uint32(link), uint32(counter))
 }
@@ -1800,6 +1913,14 @@ func (l *library) DeviceSetVirtualizationMode(device Device, virtualMode GpuVirt
 
 func (device nvmlDevice) SetVirtualizationMode(virtualMode GpuVirtualizationMode) Return {
 	return nvmlDeviceSetVirtualizationMode(device, virtualMode)
+}
+
+func (l *library) DeviceVgpuForceGspUnload(device Device) Return {
+	return device.VgpuForceGspUnload()
+}
+
+func (device nvmlDevice) VgpuForceGspUnload() Return {
+	return nvmlDeviceVgpuForceGspUnload(device)
 }
 
 // nvml.DeviceGetGridLicensableFeatures()
@@ -2037,6 +2158,49 @@ func (l *library) GetExcludedDeviceInfoByIndex(index int) (ExcludedDeviceInfo, R
 	return info, ret
 }
 
+func (l *library) DeviceReadWritePRM_v1(device Device, buffer *PRMTLV_v1) Return {
+	return device.ReadWritePRM_v1(buffer)
+}
+
+func (device nvmlDevice) ReadWritePRM_v1(buffer *PRMTLV_v1) Return {
+	return nvmlDeviceReadWritePRM_v1(device, buffer)
+}
+
+func (l *library) DeviceReadPRMCounters_v1(device Device, prmCounters []PRMCounterId, localPort int) ([]PRMCounter_v1, Return) {
+	return device.ReadPRMCounters_v1(prmCounters, localPort)
+}
+
+func (device nvmlDevice) ReadPRMCounters_v1(prmCounters []PRMCounterId, localPort int) ([]PRMCounter_v1, Return) {
+	if len(prmCounters) == 0 {
+		return nil, ERROR_INVALID_ARGUMENT
+	}
+
+	inData := PRMCounterInput_v1{
+		LocalPort: uint32(localPort),
+	}
+
+	counters := make([]PRMCounter_v1, 0, len(prmCounters))
+	for _, counterId := range prmCounters {
+		counters = append(counters, PRMCounter_v1{
+			CounterId: uint32(counterId),
+			InData:    inData,
+		})
+	}
+
+	var pinner runtime.Pinner
+	prmCounterList := PRMCounterList_v1{
+		NumCounters: uint32(len(counters)),
+		Counters:    &counters[0],
+	}
+	pinner.Pin(&counters[0])
+	defer pinner.Unpin()
+	ret := nvmlDeviceReadPRMCounters_v1(device, &prmCounterList)
+	if ret != SUCCESS {
+		return nil, ret
+	}
+	return counters, ret
+}
+
 // nvml.DeviceSetMigMode()
 func (l *library) DeviceSetMigMode(device Device, mode int) (Return, Return) {
 	return device.SetMigMode(mode)
@@ -2100,6 +2264,33 @@ func (l *library) DeviceGetGpuInstanceProfileInfoV(device Device, profile int) G
 
 func (device nvmlDevice) GetGpuInstanceProfileInfoV(profile int) GpuInstanceProfileInfoHandler {
 	return GpuInstanceProfileInfoHandler{device, profile}
+}
+
+type GpuInstanceProfileInfoByIdHandler struct {
+	device    nvmlDevice
+	profileId int
+}
+
+func (handler GpuInstanceProfileInfoByIdHandler) V2() (GpuInstanceProfileInfo_v2, Return) {
+	var info GpuInstanceProfileInfo_v2
+	info.Version = STRUCT_VERSION(info, 2)
+	ret := nvmlDeviceGetGpuInstanceProfileInfoByIdV(handler.device, uint32(handler.profileId), &info)
+	return info, ret
+}
+
+func (handler GpuInstanceProfileInfoByIdHandler) V3() (GpuInstanceProfileInfo_v3, Return) {
+	var info GpuInstanceProfileInfo_v3
+	info.Version = STRUCT_VERSION(info, 3)
+	ret := nvmlDeviceGetGpuInstanceProfileInfoByIdV(handler.device, uint32(handler.profileId), (*GpuInstanceProfileInfo_v2)(unsafe.Pointer(&info)))
+	return info, ret
+}
+
+func (l *library) DeviceGetGpuInstanceProfileInfoByIdV(device Device, profileId int) GpuInstanceProfileInfoByIdHandler {
+	return device.GetGpuInstanceProfileInfoByIdV(profileId)
+}
+
+func (device nvmlDevice) GetGpuInstanceProfileInfoByIdV(profileId int) GpuInstanceProfileInfoByIdHandler {
+	return GpuInstanceProfileInfoByIdHandler{device, profileId}
 }
 
 // nvml.DeviceGetGpuInstancePossiblePlacements()
@@ -2514,10 +2705,13 @@ func (device nvmlDevice) GetGpcClkVfOffset() (int, Return) {
 }
 
 // nvml.DeviceSetGpcClkVfOffset()
+//
+// Deprecated: Use DeviceSetClockOffsets instead.
 func (l *library) DeviceSetGpcClkVfOffset(device Device, offset int) Return {
 	return device.SetGpcClkVfOffset(offset)
 }
 
+// Deprecated: Use DeviceSetClockOffsets instead.
 func (device nvmlDevice) SetGpcClkVfOffset(offset int) Return {
 	return nvmlDeviceSetGpcClkVfOffset(device, int32(offset))
 }
@@ -2572,10 +2766,13 @@ func (device nvmlDevice) GetMemClkVfOffset() (int, Return) {
 }
 
 // nvml.DeviceSetMemClkVfOffset()
+//
+// Deprecated: Use DeviceSetMemClkVfOffset instead
 func (l *library) DeviceSetMemClkVfOffset(device Device, offset int) Return {
 	return device.SetMemClkVfOffset(offset)
 }
 
+// Deprecated: Use DeviceSetMemClkVfOffset instead
 func (device nvmlDevice) SetMemClkVfOffset(offset int) Return {
 	return nvmlDeviceSetMemClkVfOffset(device, int32(offset))
 }
@@ -2685,6 +2882,23 @@ func (device nvmlDevice) SetVgpuSchedulerState(pSchedulerState *VgpuSchedulerSet
 	return nvmlDeviceSetVgpuSchedulerState(device, pSchedulerState)
 }
 
+func (l *library) DeviceSetVgpuSchedulerState_v2(device Device, pSchedulerState *VgpuSchedulerState_v2) Return {
+	return device.SetVgpuSchedulerState_v2(pSchedulerState)
+}
+
+func (device nvmlDevice) SetVgpuSchedulerState_v2(schedulerState *VgpuSchedulerState_v2) Return {
+	return nvmlDeviceSetVgpuSchedulerState_v2(device, schedulerState)
+}
+
+func (l *library) DeviceGetVgpuSchedulerState_v2(device Device, info VgpuSchedulerStateInfo_v2) (VgpuSchedulerStateInfo_v2, Return) {
+	return device.GetVgpuSchedulerState_v2(info)
+}
+
+func (device nvmlDevice) GetVgpuSchedulerState_v2(info VgpuSchedulerStateInfo_v2) (VgpuSchedulerStateInfo_v2, Return) {
+	ret := nvmlDeviceGetVgpuSchedulerState_v2(device, &info)
+	return info, ret
+}
+
 // nvml.DeviceGetVgpuSchedulerCapabilities()
 func (l *library) DeviceGetVgpuSchedulerCapabilities(device Device) (VgpuSchedulerCapabilities, Return) {
 	return device.GetVgpuSchedulerCapabilities()
@@ -2702,6 +2916,9 @@ func (l *library) GpuInstanceGetComputeInstancePossiblePlacements(gpuInstance Gp
 }
 
 func (gpuInstance nvmlGpuInstance) GetComputeInstancePossiblePlacements(info *ComputeInstanceProfileInfo) ([]ComputeInstancePlacement, Return) {
+	if info == nil {
+		return nil, ERROR_INVALID_ARGUMENT
+	}
 	var count uint32
 	ret := nvmlGpuInstanceGetComputeInstancePossiblePlacements(gpuInstance, info.Id, nil, &count)
 	if ret != SUCCESS {
@@ -2712,7 +2929,7 @@ func (gpuInstance nvmlGpuInstance) GetComputeInstancePossiblePlacements(info *Co
 	}
 	placementArray := make([]ComputeInstancePlacement, count)
 	ret = nvmlGpuInstanceGetComputeInstancePossiblePlacements(gpuInstance, info.Id, &placementArray[0], &count)
-	return placementArray, ret
+	return placementArray[:count], ret
 }
 
 // nvml.GpuInstanceCreateComputeInstanceWithPlacement()
@@ -2721,16 +2938,22 @@ func (l *library) GpuInstanceCreateComputeInstanceWithPlacement(gpuInstance GpuI
 }
 
 func (gpuInstance nvmlGpuInstance) CreateComputeInstanceWithPlacement(info *ComputeInstanceProfileInfo, placement *ComputeInstancePlacement) (ComputeInstance, Return) {
+	if info == nil {
+		return nil, ERROR_INVALID_ARGUMENT
+	}
 	var computeInstance nvmlComputeInstance
 	ret := nvmlGpuInstanceCreateComputeInstanceWithPlacement(gpuInstance, info.Id, placement, &computeInstance)
 	return computeInstance, ret
 }
 
 // nvml.DeviceGetGpuFabricInfo()
+//
+// Deprecated: Use DeviceGetGpuFabricInfoV instead
 func (l *library) DeviceGetGpuFabricInfo(device Device) (GpuFabricInfo, Return) {
 	return device.GetGpuFabricInfo()
 }
 
+// Deprecated: Use DeviceGetGpuFabricInfoV instead
 func (device nvmlDevice) GetGpuFabricInfo() (GpuFabricInfo, Return) {
 	var gpuFabricInfo GpuFabricInfo
 	ret := nvmlDeviceGetGpuFabricInfo(device, &gpuFabricInfo)
@@ -2807,10 +3030,56 @@ func (l *library) DeviceGetRunningProcessDetailList(device Device) (ProcessDetai
 }
 
 func (device nvmlDevice) GetRunningProcessDetailList() (ProcessDetailList, Return) {
+	return deviceGetRunningProcessDetailList(device)
+}
+
+func deviceGetRunningProcessDetailList(device nvmlDevice) (ProcessDetailList, Return) {
 	var plist ProcessDetailList
 	plist.Version = STRUCT_VERSION(plist, 1)
-	ret := nvmlDeviceGetRunningProcessDetailList(device, &plist)
-	return plist, ret
+	plist.NumProcArrayEntries = 1
+
+	for {
+		// Allocate memory in cgo for ProcessDetailList::ProcArray
+		// We can't simply use a unsafe.Pointer of Go slice here
+		// otherwise it will trigger the following error:
+		//   runtime error: cgo argument has Go pointer to unpinned Go pointer
+		count := plist.NumProcArrayEntries
+		cptr := malloc(uintptr(count) * unsafe.Sizeof(ProcessDetail_v1{}))
+		if cptr == nil {
+			return plist, ERROR_MEMORY
+		}
+
+		plist.ProcArray = (*ProcessDetail_v1)(cptr)
+		ret := nvmlDeviceGetRunningProcessDetailList(device, &plist)
+		if ret == SUCCESS {
+			out := make([]ProcessDetail_v1, plist.NumProcArrayEntries)
+			src := unsafe.Slice((*ProcessDetail_v1)(cptr), plist.NumProcArrayEntries)
+			copy(out, src)
+
+			if plist.NumProcArrayEntries > 0 {
+				plist.ProcArray = &out[0]
+			} else {
+				plist.ProcArray = nil
+			}
+
+			// Clean up C memory before return
+			free(cptr)
+
+			return plist, ret
+		}
+
+		// Clean up C memory before retry/return
+		if cptr != nil {
+			free(cptr)
+		}
+
+		if ret != ERROR_INSUFFICIENT_SIZE {
+			return plist, ret
+		}
+
+		// Increase capacity and retry
+		plist.NumProcArrayEntries *= 2
+	}
 }
 
 // nvml.DeviceGetConfComputeMemSizeInfo()
@@ -2847,14 +3116,12 @@ func (device nvmlDevice) GetConfComputeGpuCertificate() (ConfComputeGpuCertifica
 }
 
 // nvml.DeviceGetConfComputeGpuAttestationReport()
-func (l *library) DeviceGetConfComputeGpuAttestationReport(device Device) (ConfComputeGpuAttestationReport, Return) {
-	return device.GetConfComputeGpuAttestationReport()
+func (l *library) DeviceGetConfComputeGpuAttestationReport(device Device, gpuAtstReport *ConfComputeGpuAttestationReport) Return {
+	return device.GetConfComputeGpuAttestationReport(gpuAtstReport)
 }
 
-func (device nvmlDevice) GetConfComputeGpuAttestationReport() (ConfComputeGpuAttestationReport, Return) {
-	var gpuAtstReport ConfComputeGpuAttestationReport
-	ret := nvmlDeviceGetConfComputeGpuAttestationReport(device, &gpuAtstReport)
-	return gpuAtstReport, ret
+func (device nvmlDevice) GetConfComputeGpuAttestationReport(gpuAtstReport *ConfComputeGpuAttestationReport) Return {
+	return nvmlDeviceGetConfComputeGpuAttestationReport(device, gpuAtstReport)
 }
 
 // nvml.DeviceSetConfComputeUnprotectedMemSize()
@@ -2864,15 +3131,6 @@ func (l *library) DeviceSetConfComputeUnprotectedMemSize(device Device, sizeKiB 
 
 func (device nvmlDevice) SetConfComputeUnprotectedMemSize(sizeKiB uint64) Return {
 	return nvmlDeviceSetConfComputeUnprotectedMemSize(device, sizeKiB)
-}
-
-// nvml.DeviceSetPowerManagementLimit_v2()
-func (l *library) DeviceSetPowerManagementLimit_v2(device Device, powerValue *PowerValue_v2) Return {
-	return device.SetPowerManagementLimit_v2(powerValue)
-}
-
-func (device nvmlDevice) SetPowerManagementLimit_v2(powerValue *PowerValue_v2) Return {
-	return nvmlDeviceSetPowerManagementLimit_v2(device, powerValue)
 }
 
 // nvml.DeviceGetC2cModeInfoV()
@@ -2906,6 +3164,17 @@ func (device nvmlDevice) GetLastBBXFlushTime() (uint64, uint, Return) {
 	return timestamp, durationUs, ret
 }
 
+// nvml.DeviceGetBBXTimeData_v1()
+func (l *library) DeviceGetBBXTimeData_v1(device Device) (BBXTimeData_v1, Return) {
+	return device.GetBBXTimeData_v1()
+}
+
+func (device nvmlDevice) GetBBXTimeData_v1() (BBXTimeData_v1, Return) {
+	var timeData BBXTimeData_v1
+	ret := nvmlDeviceGetBBXTimeData_v1(device, &timeData)
+	return timeData, ret
+}
+
 // nvml.DeviceGetNumaNodeId()
 func (l *library) DeviceGetNumaNodeId(device Device) (int, Return) {
 	return device.GetNumaNodeId()
@@ -2915,6 +3184,38 @@ func (device nvmlDevice) GetNumaNodeId() (int, Return) {
 	var node uint32
 	ret := nvmlDeviceGetNumaNodeId(device, &node)
 	return int(node), ret
+}
+
+func (l *library) DeviceGetAddressingMode(device Device) (DeviceAddressingMode, Return) {
+	return device.GetAddressingMode()
+}
+
+func (device nvmlDevice) GetAddressingMode() (DeviceAddressingMode, Return) {
+	var deviceAddressingMode DeviceAddressingMode
+	deviceAddressingMode.Version = STRUCT_VERSION(deviceAddressingMode, 1)
+	ret := nvmlDeviceGetAddressingMode(device, &deviceAddressingMode)
+	return deviceAddressingMode, ret
+}
+
+func (l *library) DeviceGetRepairStatus(device Device) (RepairStatus, Return) {
+	return device.GetRepairStatus()
+}
+
+func (device nvmlDevice) GetRepairStatus() (RepairStatus, Return) {
+	var repairStatus RepairStatus
+	repairStatus.Version = STRUCT_VERSION(repairStatus, 1)
+	ret := nvmlDeviceGetRepairStatus(device, &repairStatus)
+	return repairStatus, ret
+}
+
+func (l *library) DeviceGetUnrepairableMemoryFlag_v1(device Device) (UnrepairableMemoryStatus_v1, Return) {
+	return device.GetUnrepairableMemoryFlag_v1()
+}
+
+func (device nvmlDevice) GetUnrepairableMemoryFlag_v1() (UnrepairableMemoryStatus_v1, Return) {
+	var status UnrepairableMemoryStatus_v1
+	ret := nvmlDeviceGetUnrepairableMemoryFlag_v1(device, &status)
+	return status, ret
 }
 
 // nvml.DeviceGetPciInfoExt()
@@ -2939,10 +3240,17 @@ func (handler GpuFabricInfoHandler) V1() (GpuFabricInfo, Return) {
 }
 
 func (handler GpuFabricInfoHandler) V2() (GpuFabricInfo_v2, Return) {
-	var info GpuFabricInfoV
+	var info GpuFabricInfo_v2
 	info.Version = STRUCT_VERSION(info, 2)
-	ret := nvmlDeviceGetGpuFabricInfoV(handler.device, &info)
-	return GpuFabricInfo_v2(info), ret
+	ret := nvmlDeviceGetGpuFabricInfoV(handler.device, (*GpuFabricInfoV)(unsafe.Pointer(&info)))
+	return info, ret
+}
+
+func (handler GpuFabricInfoHandler) V3() (GpuFabricInfo_v3, Return) {
+	var info GpuFabricInfo_v3
+	info.Version = STRUCT_VERSION(info, 3)
+	ret := nvmlDeviceGetGpuFabricInfoV(handler.device, (*GpuFabricInfoV)(unsafe.Pointer(&info)))
+	return info, ret
 }
 
 func (l *library) DeviceGetGpuFabricInfoV(device Device) GpuFabricInfoHandler {
@@ -2960,6 +3268,7 @@ func (l *library) DeviceGetProcessesUtilizationInfo(device Device) (ProcessesUti
 
 func (device nvmlDevice) GetProcessesUtilizationInfo() (ProcessesUtilizationInfo, Return) {
 	var processesUtilInfo ProcessesUtilizationInfo
+	processesUtilInfo.Version = STRUCT_VERSION(processesUtilInfo, 1)
 	ret := nvmlDeviceGetProcessesUtilizationInfo(device, &processesUtilInfo)
 	return processesUtilInfo, ret
 }
@@ -3035,6 +3344,7 @@ func (l *library) DeviceGetVgpuInstancesUtilizationInfo(device Device) (VgpuInst
 
 func (device nvmlDevice) GetVgpuInstancesUtilizationInfo() (VgpuInstancesUtilizationInfo, Return) {
 	var vgpuUtilInfo VgpuInstancesUtilizationInfo
+	vgpuUtilInfo.Version = STRUCT_VERSION(vgpuUtilInfo, 1)
 	ret := nvmlDeviceGetVgpuInstancesUtilizationInfo(device, &vgpuUtilInfo)
 	return vgpuUtilInfo, ret
 }
@@ -3254,6 +3564,34 @@ func (device nvmlDevice) SetNvlinkBwMode(setBwMode *NvlinkSetBwMode) Return {
 	return nvmlDeviceSetNvlinkBwMode(device, setBwMode)
 }
 
+func (l *library) DeviceGetNvLinkInfo(device Device) NvLinkInfoHandler {
+	return device.GetNvLinkInfo()
+}
+
+func (device nvmlDevice) GetNvLinkInfo() NvLinkInfoHandler {
+	return NvLinkInfoHandler{device}
+}
+
+type NvLinkInfoHandler struct {
+	device nvmlDevice
+}
+
+func (handler NvLinkInfoHandler) V1() (NvLinkInfo_v1, Return) {
+	var info NvLinkInfo_v1
+	info.Version = STRUCT_VERSION(info, 1)
+	ret := nvmlDeviceGetNvLinkInfo(handler.device, (*NvLinkInfo)(unsafe.Pointer(&info)))
+
+	return info, ret
+}
+
+func (handler NvLinkInfoHandler) V2() (NvLinkInfo_v2, Return) {
+	var info NvLinkInfo_v2
+	info.Version = STRUCT_VERSION(info, 2)
+	ret := nvmlDeviceGetNvLinkInfo(handler.device, (*NvLinkInfo)(unsafe.Pointer(&info)))
+
+	return info, ret
+}
+
 // nvml.DeviceWorkloadPowerProfileGetProfilesInfo()
 func (l *library) DeviceWorkloadPowerProfileGetProfilesInfo(device Device) (WorkloadPowerProfileProfilesInfo, Return) {
 	return device.WorkloadPowerProfileGetProfilesInfo()
@@ -3296,6 +3634,25 @@ func (device nvmlDevice) WorkloadPowerProfileClearRequestedProfiles(requestedPro
 	return nvmlDeviceWorkloadPowerProfileClearRequestedProfiles(device, requestedProfiles)
 }
 
+// nvml.DeviceWorkloadPowerProfileUpdateProfiles_v1
+func (l *library) DeviceWorkloadPowerProfileUpdateProfiles_v1(device Device, operation PowerProfileOperation, profileTypes []PowerProfileType) Return {
+	return device.WorkloadPowerProfileUpdateProfiles_v1(operation, profileTypes)
+}
+
+func (device nvmlDevice) WorkloadPowerProfileUpdateProfiles_v1(operation PowerProfileOperation, profileTypes []PowerProfileType) Return {
+	var profileTypesInt32 []int32
+	for _, profileType := range profileTypes {
+		profileTypesInt32 = append(profileTypesInt32, int32(profileType))
+	}
+	updateProfileMask := int32SliceToMask255(profileTypesInt32)
+	updateProfilesRequest := WorkloadPowerProfileUpdateProfiles_v1{
+		Operation:          uint32(operation),
+		UpdateProfilesMask: updateProfileMask,
+	}
+
+	return nvmlDeviceWorkloadPowerProfileUpdateProfiles_v1(device, &updateProfilesRequest)
+}
+
 // nvml.DevicePowerSmoothingActivatePresetProfile()
 func (l *library) DevicePowerSmoothingActivatePresetProfile(device Device, profile *PowerSmoothingProfile) Return {
 	return device.PowerSmoothingActivatePresetProfile(profile)
@@ -3321,6 +3678,42 @@ func (l *library) DevicePowerSmoothingSetState(device Device, state *PowerSmooth
 
 func (device nvmlDevice) PowerSmoothingSetState(state *PowerSmoothingState) Return {
 	return nvmlDevicePowerSmoothingSetState(device, state)
+}
+
+func (l *library) DeviceGetSramUniqueUncorrectedEccErrorCounts(device Device, errorCounts *EccSramUniqueUncorrectedErrorCounts) Return {
+	return device.GetSramUniqueUncorrectedEccErrorCounts(errorCounts)
+}
+
+func (device nvmlDevice) GetSramUniqueUncorrectedEccErrorCounts(errorCounts *EccSramUniqueUncorrectedErrorCounts) Return {
+	return nvmlDeviceGetSramUniqueUncorrectedEccErrorCounts(device, errorCounts)
+}
+
+// nvml.DeviceSetRusdSettings_v1()
+func (l *library) DeviceSetRusdSettings_v1(device Device, settings RusdSettings_v1) Return {
+	return device.SetRusdSettings_v1(settings)
+}
+func (device nvmlDevice) SetRusdSettings_v1(settings RusdSettings_v1) Return {
+	settings.Version = STRUCT_VERSION(settings, 1)
+	return nvmlDeviceSetRusdSettings_v1(device, &settings)
+}
+
+func (l *library) DeviceGetRemappedRows_v2(device Device) (RemappedRowsInfo_v2, Return) {
+	return device.GetRemappedRows_v2()
+}
+
+func (device nvmlDevice) GetRemappedRows_v2() (RemappedRowsInfo_v2, Return) {
+	var rowsInfo RemappedRowsInfo_v2
+	ret := nvmlDeviceGetRemappedRows_v2(device, &rowsInfo)
+	return rowsInfo, ret
+}
+
+func (l *library) DeviceGetVgpuSchedulerLog_v2(device Device, logInfo VgpuSchedulerLogInfo_v2) (VgpuSchedulerLogInfo_v2, Return) {
+	return device.GetVgpuSchedulerLog_v2(logInfo)
+}
+
+func (device nvmlDevice) GetVgpuSchedulerLog_v2(logInfo VgpuSchedulerLogInfo_v2) (VgpuSchedulerLogInfo_v2, Return) {
+	ret := nvmlDeviceGetVgpuSchedulerLog_v2(device, &logInfo)
+	return logInfo, ret
 }
 
 // nvml.GpuInstanceGetCreatableVgpus()
@@ -3411,4 +3804,30 @@ func (l *library) GpuInstanceSetVgpuHeterogeneousMode(gpuInstance GpuInstance, h
 
 func (gpuInstance nvmlGpuInstance) SetVgpuHeterogeneousMode(heterogeneousMode *VgpuHeterogeneousMode) Return {
 	return nvmlGpuInstanceSetVgpuHeterogeneousMode(gpuInstance, heterogeneousMode)
+}
+
+func (l *library) GpuInstanceGetVgpuSchedulerState_v2(gpuInstance GpuInstance, info VgpuSchedulerStateInfo_v2) (VgpuSchedulerStateInfo_v2, Return) {
+	return gpuInstance.GetVgpuSchedulerState_v2(info)
+}
+
+func (gpuInstance nvmlGpuInstance) GetVgpuSchedulerState_v2(info VgpuSchedulerStateInfo_v2) (VgpuSchedulerStateInfo_v2, Return) {
+	ret := nvmlGpuInstanceGetVgpuSchedulerState_v2(gpuInstance, &info)
+	return info, ret
+}
+
+func (l *library) GpuInstanceGetVgpuSchedulerLog_v2(gpuInstance GpuInstance, logInfo VgpuSchedulerLogInfo_v2) (VgpuSchedulerLogInfo_v2, Return) {
+	return gpuInstance.GetVgpuSchedulerLog_v2(logInfo)
+}
+
+func (gpuInstance nvmlGpuInstance) GetVgpuSchedulerLog_v2(logInfo VgpuSchedulerLogInfo_v2) (VgpuSchedulerLogInfo_v2, Return) {
+	ret := nvmlGpuInstanceGetVgpuSchedulerLog_v2(gpuInstance, &logInfo)
+	return logInfo, ret
+}
+
+func (l *library) GpuInstanceSetVgpuSchedulerState_v2(gpuInstance GpuInstance, schedulerState *VgpuSchedulerState_v2) Return {
+	return gpuInstance.SetVgpuSchedulerState_v2(schedulerState)
+}
+
+func (gpuInstance nvmlGpuInstance) SetVgpuSchedulerState_v2(schedulerState *VgpuSchedulerState_v2) Return {
+	return nvmlGpuInstanceSetVgpuSchedulerState_v2(gpuInstance, schedulerState)
 }

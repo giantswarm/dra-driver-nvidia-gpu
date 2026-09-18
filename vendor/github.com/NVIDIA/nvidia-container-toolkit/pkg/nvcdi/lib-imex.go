@@ -18,6 +18,7 @@ package nvcdi
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -26,7 +27,6 @@ import (
 	"tags.cncf.io/container-device-interface/specs-go"
 
 	"github.com/NVIDIA/nvidia-container-toolkit/internal/discover"
-	"github.com/NVIDIA/nvidia-container-toolkit/internal/edits"
 )
 
 type imexlib nvcdilib
@@ -40,11 +40,16 @@ var _ deviceSpecGeneratorFactory = (*imexlib)(nil)
 
 const (
 	classImexChannel = "imex-channel"
+
+	// maxImexChannelID is the maximum valid IMEX channel ID.  Channel IDs must fit
+	// in the minor number of a dev_t (20 bits), matching the bound enforced by
+	// nvidia-container-cli in the legacy code path.
+	maxImexChannelID = (1 << 20) - 1
 )
 
 // GetCommonEdits returns an empty set of edits for IMEX devices.
 func (l *imexlib) GetCommonEdits() (*cdi.ContainerEdits, error) {
-	return edits.FromDiscoverer(discover.None{})
+	return l.editsFactory.FromDiscoverer(discover.None{})
 }
 
 // DeviceSpecGenerators returns the CDI device spec generators for the specified
@@ -61,7 +66,7 @@ func (l *imexlib) DeviceSpecGenerators(ids ...string) (DeviceSpecGenerator, erro
 
 	var deviceSpecGenerators DeviceSpecGenerators
 	for _, id := range channelsIDs {
-		deviceSpecGenerators = append(deviceSpecGenerators, &imexChannel{id: id, devRoot: l.devRoot})
+		deviceSpecGenerators = append(deviceSpecGenerators, &imexChannel{id: id, devRoot: l.driver.DevRoot})
 	}
 
 	return deviceSpecGenerators, nil
@@ -74,9 +79,12 @@ func (l *imexlib) getChannelIDs(ids ...string) ([]string, error) {
 		if trimmed == "all" {
 			return l.getAllChannelIDs()
 		}
-		_, err := strconv.ParseUint(trimmed, 10, 64)
+		channelID, err := strconv.ParseUint(trimmed, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("invalid channel ID %v: %w", id, err)
+			return nil, fmt.Errorf("invalid channel ID %s: %w", id, err)
+		}
+		if channelID > maxImexChannelID {
+			return nil, fmt.Errorf("invalid channel ID %s: must be in the range [0, %d]", id, maxImexChannelID)
 		}
 		channelIDs = append(channelIDs, trimmed)
 	}
@@ -87,7 +95,7 @@ func (l *imexlib) getChannelIDs(ids ...string) ([]string, error) {
 func (l *imexlib) getAllChannelIDs() ([]string, error) {
 	channelsDiscoverer := discover.NewCharDeviceDiscoverer(
 		l.logger,
-		l.devRoot,
+		l.driver.DevRoot,
 		[]string{"/dev/nvidia-caps-imex-channels/channel*"},
 	)
 
@@ -108,13 +116,17 @@ func (l *imexlib) getAllChannelIDs() ([]string, error) {
 // GetDeviceSpecs returns the CDI device specs the specified IMEX channel.
 func (l *imexChannel) GetDeviceSpecs() ([]specs.Device, error) {
 	path := "/dev/nvidia-caps-imex-channels/channel" + l.id
+	hostPath := filepath.Join(l.devRoot, path)
+	if _, err := os.Stat(hostPath); err != nil {
+		return nil, fmt.Errorf("IMEX channel %s not found at %s: %w", l.id, hostPath, err)
+	}
 	deviceSpec := specs.Device{
 		Name: l.id,
 		ContainerEdits: specs.ContainerEdits{
 			DeviceNodes: []*specs.DeviceNode{
 				{
 					Path:     path,
-					HostPath: filepath.Join(l.devRoot, path),
+					HostPath: hostPath,
 				},
 			},
 		},

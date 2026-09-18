@@ -1,18 +1,18 @@
-/**
-# Copyright 2023 NVIDIA CORPORATION
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-**/
+/*
+Copyright The Kubernetes Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package main
 
@@ -20,43 +20,23 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+
+	"k8s.io/klog/v2"
 )
 
 type root string
 
-// extraSearchPaths reads a colon-separated env var and returns the entries to
-// prepend (so they take precedence) to the default search list. Useful for
-// driver bundle layouts whose binaries/libraries live outside the FHS
-// defaults, or where bundled absolute symlinks rely on a sibling host path
-// being bind-mounted into the container (see the chart's
-// `extraHostPathMounts` value).
-func extraSearchPaths(envVar string) []string {
-	v := os.Getenv(envVar)
-	if v == "" {
-		return nil
-	}
-	var out []string
-	for _, p := range strings.Split(v, ":") {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
 // getDriverLibraryPath returns path to `libnvidia-ml.so.1` in the driver root.
 // The folder for this file is also expected to be the location of other driver files.
 func (r root) getDriverLibraryPath() (string, error) {
-	librarySearchPaths := append(extraSearchPaths("EXTRA_DRIVER_LIBRARY_PATHS"),
+	librarySearchPaths := []string{
 		"/usr/lib64",
 		"/usr/lib/x86_64-linux-gnu",
 		"/usr/lib/aarch64-linux-gnu",
 		"/lib64",
 		"/lib/x86_64-linux-gnu",
 		"/lib/aarch64-linux-gnu",
-	)
+	}
 
 	libraryPath, err := r.findFile("libnvidia-ml.so.1", librarySearchPaths...)
 	if err != nil {
@@ -68,14 +48,39 @@ func (r root) getDriverLibraryPath() (string, error) {
 
 // getNvidiaSMIPath returns path to the `nvidia-smi` executable in the driver root.
 func (r root) getNvidiaSMIPath() (string, error) {
-	binarySearchPaths := append(extraSearchPaths("EXTRA_DRIVER_BINARY_PATHS"),
+	binarySearchPaths := []string{
+		"/opt/bin",
 		"/usr/bin",
 		"/usr/sbin",
 		"/bin",
 		"/sbin",
-	)
+	}
 
 	binaryPath, err := r.findFile("nvidia-smi", binarySearchPaths...)
+	if err != nil {
+		return "", err
+	}
+
+	return binaryPath, nil
+}
+
+// getNvidiaImexCtlPath returns the path to the `nvidia-imex-ctl` executable
+// in the driver root. Unlike nvidia-smi, this is not resolved eagerly at
+// startup: nvidia-imex-ctl ships with the optional nvidia-imex package,
+// which is only expected to be present when the host administrator runs
+// nvidia-imex as a host service (see the HostManagedIMEXDaemon feature
+// gate), so callers should look it up lazily and treat its absence as an
+// ordinary, actionable error rather than a startup failure.
+func (r root) getNvidiaImexCtlPath() (string, error) {
+	binarySearchPaths := []string{
+		"/opt/bin",
+		"/usr/bin",
+		"/usr/sbin",
+		"/bin",
+		"/sbin",
+	}
+
+	binaryPath, err := r.findFile("nvidia-imex-ctl", binarySearchPaths...)
 	if err != nil {
 		return "", err
 	}
@@ -105,12 +110,24 @@ func (r root) getDevRoot() string {
 // findFile searches the root for a specified file.
 // A number of folders can be specified to search in addition to the root itself.
 // If the file represents a symlink, this is resolved and the final path is returned.
+// Candidates that do not resolve to a regular file (e.g. directories) are skipped
+// so that they cannot shadow the actual file in a later search path.
 func (r root) findFile(name string, searchIn ...string) (string, error) {
 
 	for _, d := range append([]string{"/"}, searchIn...) {
 		l := filepath.Join(string(r), d, name)
 		candidate, err := resolveLink(l)
 		if err != nil {
+			klog.V(4).Infof("Skipping candidate %q: %v", l, err)
+			continue
+		}
+		info, err := os.Stat(candidate)
+		if err != nil {
+			klog.V(4).Infof("Skipping candidate %q: %v", candidate, err)
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			klog.V(4).Infof("Skipping candidate %q: not a regular file (mode %s)", candidate, info.Mode())
 			continue
 		}
 		return candidate, nil
@@ -125,7 +142,7 @@ func (r root) findFile(name string, searchIn ...string) (string, error) {
 func resolveLink(l string) (string, error) {
 	resolved, err := filepath.EvalSymlinks(l)
 	if err != nil {
-		return "", fmt.Errorf("error resolving link '%v': %v", l, err)
+		return "", fmt.Errorf("error resolving link %q: %w", l, err)
 	}
 	return resolved, nil
 }

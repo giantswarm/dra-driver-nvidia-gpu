@@ -1,18 +1,18 @@
 /*
- * Copyright (c) 2025 NVIDIA CORPORATION.  All rights reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+Copyright The Kubernetes Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package main
 
@@ -34,7 +34,8 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
-	nvapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
+	nvapi "sigs.k8s.io/dra-driver-nvidia-gpu/api/nvidia.com/resource/v1beta1"
+	"sigs.k8s.io/dra-driver-nvidia-gpu/pkg/featuregates"
 )
 
 const (
@@ -43,12 +44,16 @@ const (
 
 type DaemonSetTemplateData struct {
 	Namespace                 string
-	GenerateName              string
+	Name                      string
 	Finalizer                 string
 	ComputeDomainLabelKey     string
 	ComputeDomainLabelValue   types.UID
 	ResourceClaimTemplateName string
 	ImageName                 string
+	MaxNodesPerIMEXDomain     int
+	FeatureGates              map[string]bool
+	LogVerbosity              int
+	ImagePullSecretNames      []string
 }
 
 type DaemonSetManager struct {
@@ -64,10 +69,11 @@ type DaemonSetManager struct {
 	mutationCache cache.MutationCache
 
 	resourceClaimTemplateManager *DaemonSetResourceClaimTemplateManager
+	cdStatusManager              *ComputeDomainStatusManager
 	cleanupManager               *CleanupManager[*appsv1.DaemonSet]
 }
 
-func NewDaemonSetManager(config *ManagerConfig, getComputeDomain GetComputeDomainFunc) *DaemonSetManager {
+func NewDaemonSetManager(config *ManagerConfig, getComputeDomain GetComputeDomainFunc, listComputeDomains ListComputeDomainsFunc, updateComputeDomainStatus UpdateComputeDomainStatusFunc) *DaemonSetManager {
 	labelSelector := &metav1.LabelSelector{
 		MatchExpressions: []metav1.LabelSelectorRequirement{
 			{
@@ -80,6 +86,7 @@ func NewDaemonSetManager(config *ManagerConfig, getComputeDomain GetComputeDomai
 	factory := informers.NewSharedInformerFactoryWithOptions(
 		config.clientsets.Core,
 		informerResyncPeriod,
+		informers.WithNamespace(config.driverNamespace),
 		informers.WithTweakListOptions(func(opts *metav1.ListOptions) {
 			opts.LabelSelector = metav1.FormatLabelSelector(labelSelector)
 		}),
@@ -94,6 +101,12 @@ func NewDaemonSetManager(config *ManagerConfig, getComputeDomain GetComputeDomai
 		informer:         informer,
 	}
 	m.resourceClaimTemplateManager = NewDaemonSetResourceClaimTemplateManager(config, getComputeDomain)
+
+	// Create ComputeDomainStatusManager to sync node info to CD status
+	// - When feature gate ON: syncs from CDCliques + non-fabric-attached pods
+	// - When feature gate OFF: syncs from non-fabric-attached pods + handles deletions
+	m.cdStatusManager = NewComputeDomainStatusManager(config, listComputeDomains, updateComputeDomainStatus)
+
 	m.cleanupManager = NewCleanupManager[*appsv1.DaemonSet](informer, getComputeDomain, m.cleanup)
 
 	return m
@@ -112,7 +125,7 @@ func (m *DaemonSetManager) Start(ctx context.Context) (rerr error) {
 	}()
 
 	if err := addComputeDomainLabelIndexer[*appsv1.DaemonSet](m.informer); err != nil {
-		return fmt.Errorf("error adding indexer for MulitNodeEnvironment label: %w", err)
+		return fmt.Errorf("error adding indexer for MultiNodeEnvironment label: %w", err)
 	}
 
 	m.mutationCache = cache.NewIntegerResourceVersionMutationCache(
@@ -149,6 +162,10 @@ func (m *DaemonSetManager) Start(ctx context.Context) (rerr error) {
 		return fmt.Errorf("error starting ResourceClaimTemplate manager: %w", err)
 	}
 
+	if err := m.cdStatusManager.Start(ctx); err != nil {
+		return fmt.Errorf("error starting ComputeDomain status manager: %w", err)
+	}
+
 	if err := m.cleanupManager.Start(ctx); err != nil {
 		return fmt.Errorf("error starting cleanup manager: %w", err)
 	}
@@ -157,15 +174,20 @@ func (m *DaemonSetManager) Start(ctx context.Context) (rerr error) {
 }
 
 func (m *DaemonSetManager) Stop() error {
+	if err := m.cdStatusManager.Stop(); err != nil {
+		klog.Errorf("error stopping ComputeDomain status manager: %v", err)
+	}
 	if err := m.resourceClaimTemplateManager.Stop(); err != nil {
 		return fmt.Errorf("error stopping ResourceClaimTemplate manager: %w", err)
 	}
-	m.cancelContext()
+	if m.cancelContext != nil {
+		m.cancelContext()
+	}
 	m.waitGroup.Wait()
 	return nil
 }
 
-func (m *DaemonSetManager) Create(ctx context.Context, namespace string, cd *nvapi.ComputeDomain) (*appsv1.DaemonSet, error) {
+func (m *DaemonSetManager) Create(ctx context.Context, cd *nvapi.ComputeDomain) (*appsv1.DaemonSet, error) {
 	ds, err := getByComputeDomainUID[*appsv1.DaemonSet](ctx, m.mutationCache, string(cd.UID))
 	if err != nil {
 		return nil, fmt.Errorf("error retrieving DaemonSet: %w", err)
@@ -177,19 +199,23 @@ func (m *DaemonSetManager) Create(ctx context.Context, namespace string, cd *nva
 		return ds[0], nil
 	}
 
-	rct, err := m.resourceClaimTemplateManager.Create(ctx, namespace, cd)
+	rct, err := m.resourceClaimTemplateManager.Create(ctx, cd)
 	if err != nil {
 		return nil, fmt.Errorf("error creating ResourceClaimTemplate: %w", err)
 	}
 
 	templateData := DaemonSetTemplateData{
 		Namespace:                 m.config.driverNamespace,
-		GenerateName:              fmt.Sprintf("%s-", cd.Name),
+		Name:                      fmt.Sprintf("computedomain-daemon-%s", cd.UID),
 		Finalizer:                 computeDomainFinalizer,
 		ComputeDomainLabelKey:     computeDomainLabelKey,
 		ComputeDomainLabelValue:   cd.UID,
 		ResourceClaimTemplateName: rct.Name,
 		ImageName:                 m.config.imageName,
+		MaxNodesPerIMEXDomain:     m.config.maxNodesPerIMEXDomain,
+		FeatureGates:              featuregates.ToMap(),
+		LogVerbosity:              m.config.logVerbosityCDDaemon,
+		ImagePullSecretNames:      m.config.imagePullSecretNames,
 	}
 
 	tmpl, err := template.ParseFiles(DaemonSetTemplatePath)
@@ -224,6 +250,20 @@ func (m *DaemonSetManager) Create(ctx context.Context, namespace string, cd *nva
 	m.mutationCache.Mutation(d)
 
 	return d, nil
+}
+
+func (m *DaemonSetManager) Get(ctx context.Context, cdUID string) (*appsv1.DaemonSet, error) {
+	ds, err := getByComputeDomainUID[*appsv1.DaemonSet](ctx, m.mutationCache, cdUID)
+	if err != nil {
+		return nil, fmt.Errorf("error retrieving DaemonSet: %w", err)
+	}
+	if len(ds) > 1 {
+		return nil, fmt.Errorf("more than one DaemonSet found with same ComputeDomain UID")
+	}
+	if len(ds) == 0 {
+		return nil, nil
+	}
+	return ds[0], nil
 }
 
 func (m *DaemonSetManager) Delete(ctx context.Context, cdUID string) error {
@@ -332,12 +372,7 @@ func (m *DaemonSetManager) onAddOrUpdate(ctx context.Context, obj any) error {
 		return fmt.Errorf("failed to cast to DaemonSet")
 	}
 
-	// Only process events from the driver namespace
-	if d.Namespace != m.config.driverNamespace {
-		return nil
-	}
-
-	klog.Infof("Processing added or updated DaemonSet: %s/%s", d.Namespace, d.Name)
+	klog.V(2).Infof("Processing added or updated DaemonSet: %s/%s", d.Namespace, d.Name)
 
 	cd, err := m.getComputeDomain(d.Labels[computeDomainLabelKey])
 	if err != nil {

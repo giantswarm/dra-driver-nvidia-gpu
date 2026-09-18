@@ -1,23 +1,24 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+Copyright The Kubernetes Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,23 +26,35 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
 	cdispec "tags.cncf.io/container-device-interface/specs-go"
 
-	nvapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
-	nvinformers "github.com/NVIDIA/k8s-dra-driver-gpu/pkg/nvidia.com/informers/externalversions"
+	nvapi "sigs.k8s.io/dra-driver-nvidia-gpu/api/nvidia.com/resource/v1beta1"
+	"sigs.k8s.io/dra-driver-nvidia-gpu/internal/common"
+	"sigs.k8s.io/dra-driver-nvidia-gpu/pkg/featuregates"
+	nvinformers "sigs.k8s.io/dra-driver-nvidia-gpu/pkg/nvidia.com/informers/externalversions"
 )
 
 const (
 	computeDomainLabelKey = "resource.nvidia.com/computeDomain"
 
+	// gpuCliqueLabelKey sets the node label historically set by
+	// gpu-feature-discovery (see
+	// https://github.com/NVIDIA/k8s-device-plugin/blob/main/docs/gpu-feature-discovery/README.md#generated-labels).
+	// gpu-feature-discovery that is bundled with the k8s-device-plugin is being deprecated,
+	// so the kubelet plugin now owns setting it on systems where the DRA driver is enabled.
+	gpuCliqueLabelKey = "nvidia.com/gpu.clique"
+
+	gpuCliqueLabelRefreshInterval = 10 * time.Minute
+
 	informerResyncPeriod = 10 * time.Minute
 	cleanupInterval      = 10 * time.Minute
 
-	ComputeDomainDaemonSettingsRoot       = DriverPluginPath + "/domains"
+	ComputeDomainDaemonConfigFilesDirName = "domains"
 	ComputeDomainDaemonConfigTemplatePath = "/templates/compute-domain-daemon-config.tmpl.cfg"
 )
 
@@ -54,20 +67,30 @@ type ComputeDomainManager struct {
 	informer cache.SharedIndexInformer
 
 	configFilesRoot string
-	cliqueID        string
+
+	cliqueIDMu sync.RWMutex
+	cliqueID   string
+
+	getCliqueIDFunc func() (string, error)
 }
 
 type ComputeDomainDaemonSettings struct {
 	manager         *ComputeDomainManager
-	domain          string
+	domainID        string
 	rootDir         string
 	configTmplPath  string
 	nodesConfigPath string
 }
 
-func NewComputeDomainManager(config *Config, configFilesRoot, cliqueID string) *ComputeDomainManager {
+func NewComputeDomainManager(config *Config, getCliqueIDFunc func() (string, error)) (*ComputeDomainManager, error) {
 	factory := nvinformers.NewSharedInformerFactory(config.clientsets.Nvidia, informerResyncPeriod)
 	informer := factory.Resource().V1beta1().ComputeDomains().Informer()
+	configFilesRoot := filepath.Join(config.DriverPluginPath(), ComputeDomainDaemonConfigFilesDirName)
+
+	cliqueID, err := getCliqueIDFunc()
+	if err != nil {
+		return nil, fmt.Errorf("error getting cliqueID: %w", err)
+	}
 
 	m := &ComputeDomainManager{
 		config:          config,
@@ -75,9 +98,25 @@ func NewComputeDomainManager(config *Config, configFilesRoot, cliqueID string) *
 		informer:        informer,
 		configFilesRoot: configFilesRoot,
 		cliqueID:        cliqueID,
+		getCliqueIDFunc: getCliqueIDFunc,
 	}
 
-	return m
+	return m, nil
+}
+
+// CliqueID returns the most recently known GPU clique ID. Safe for
+// concurrent use.
+func (m *ComputeDomainManager) CliqueID() string {
+	m.cliqueIDMu.RLock()
+	defer m.cliqueIDMu.RUnlock()
+	return m.cliqueID
+}
+
+// setCliqueID stores a newly observed GPU clique ID.
+func (m *ComputeDomainManager) setCliqueID(cliqueID string) {
+	m.cliqueIDMu.Lock()
+	defer m.cliqueIDMu.Unlock()
+	m.cliqueID = cliqueID
 }
 
 func (m *ComputeDomainManager) Start(ctx context.Context) (rerr error) {
@@ -115,78 +154,108 @@ func (m *ComputeDomainManager) Start(ctx context.Context) (rerr error) {
 		return fmt.Errorf("informer cache sync for ComputeDomains failed")
 	}
 
+	if m.config.flags.gpuCliqueLabelEnabled {
+		if err := m.SetGPUCliqueLabel(ctx); err != nil {
+			return fmt.Errorf("error setting %s node label: %w", gpuCliqueLabelKey, err)
+		}
+	}
+
+	if m.getCliqueIDFunc != nil {
+		m.waitGroup.Add(1)
+		go func() {
+			defer m.waitGroup.Done()
+			m.periodicGPUCliqueIDRefresh(ctx)
+		}()
+	}
+
 	return nil
 }
 
+//nolint:contextcheck
 func (m *ComputeDomainManager) Stop() error {
-	m.cancelContext()
+	if m.cancelContext != nil {
+		m.cancelContext()
+	}
 	m.waitGroup.Wait()
+
+	if m.config.flags.gpuCliqueLabelEnabled {
+		rmCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := m.RemoveGPUCliqueLabel(rmCtx); err != nil {
+			klog.Errorf("error removing %s node label: %v", gpuCliqueLabelKey, err)
+		}
+	}
+
 	return nil
 }
 
-func (m *ComputeDomainManager) NewSettings(domain string) *ComputeDomainDaemonSettings {
+func (m *ComputeDomainManager) NewSettings(domainID string) (*ComputeDomainDaemonSettings, error) {
+	if err := nvapi.ValidateDomainID(domainID); err != nil {
+		return nil, fmt.Errorf("invalid domainID: %w", err)
+	}
 	return &ComputeDomainDaemonSettings{
 		manager:         m,
-		domain:          domain,
-		rootDir:         fmt.Sprintf("%s/%s", m.configFilesRoot, domain),
-		configTmplPath:  fmt.Sprintf("%s/%s/%s", m.configFilesRoot, domain, "config.tmpl.cfg"),
-		nodesConfigPath: fmt.Sprintf("%s/%s/%s", m.configFilesRoot, domain, "nodes_config.cfg"),
-	}
+		domainID:        domainID,
+		rootDir:         filepath.Join(m.configFilesRoot, domainID),
+		configTmplPath:  filepath.Join(m.configFilesRoot, domainID, "imexd.cfg.tmpl"),
+		nodesConfigPath: filepath.Join(m.configFilesRoot, domainID, "nodes.cfg"),
+	}, nil
 }
 
-func (m *ComputeDomainManager) GetComputeDomainChannelContainerEdits(devRoot string, info *ComputeDomainChannelInfo) *cdiapi.ContainerEdits {
-	channelPath := fmt.Sprintf("/dev/nvidia-caps-imex-channels/channel%d", info.ID)
-
+func (m *ComputeDomainManager) GetComputeDomainChannelContainerEdits(devRoot string, info *common.NVcapDeviceInfo) *cdiapi.ContainerEdits {
 	return &cdiapi.ContainerEdits{
 		ContainerEdits: &cdispec.ContainerEdits{
-			DeviceNodes: []*cdispec.DeviceNode{
-				{
-					Path:     channelPath,
-					HostPath: filepath.Join(devRoot, channelPath),
-				},
-			},
+			DeviceNodes: []*cdispec.DeviceNode{info.CDICharDevNode()},
 		},
 	}
 }
 
-func (s *ComputeDomainDaemonSettings) GetDomain() string {
-	return s.domain
-}
-
-func (s *ComputeDomainDaemonSettings) GetCDIContainerEdits(ctx context.Context, devRoot string, info *nvcapDeviceInfo) (*cdiapi.ContainerEdits, error) {
-	cd, err := s.manager.GetComputeDomain(ctx, s.domain)
+// GetCDIContainerEditsCommon() returns the CDI spec edits always required for
+// launching the CD Daemon (whether or not it tries to launch an IMEX daemon
+// internally).
+func (s *ComputeDomainDaemonSettings) GetCDIContainerEditsCommon(ctx context.Context) (*cdiapi.ContainerEdits, error) {
+	cd, err := s.manager.GetComputeDomain(ctx, s.domainID)
 	if err != nil {
-		return nil, fmt.Errorf("error getting compute domain: %w", err)
+		return nil, fmt.Errorf("error getting compute domain %s: %w", s.domainID, err)
 	}
 	if cd == nil {
-		return nil, fmt.Errorf("compute domain not found: %s", s.domain)
+		return nil, fmt.Errorf("compute domain not found: %s", s.domainID)
 	}
 
 	edits := &cdiapi.ContainerEdits{
 		ContainerEdits: &cdispec.ContainerEdits{
 			Env: []string{
-				fmt.Sprintf("CLIQUE_ID=%s", s.manager.cliqueID),
+				fmt.Sprintf("CLIQUE_ID=%s", s.manager.CliqueID()),
 				fmt.Sprintf("COMPUTE_DOMAIN_UUID=%s", cd.UID),
 				fmt.Sprintf("COMPUTE_DOMAIN_NAME=%s", cd.Name),
 				fmt.Sprintf("COMPUTE_DOMAIN_NAMESPACE=%s", cd.Namespace),
 			},
 			Mounts: []*cdispec.Mount{
 				{
-					ContainerPath: "/etc/nvidia-imex",
+					// imexDaemonConfigDirPath   = "/imexd"
+					ContainerPath: "/imexd",
 					HostPath:      s.rootDir,
 					Options:       []string{"rw", "nosuid", "nodev", "bind"},
 				},
 			},
-			DeviceNodes: []*cdispec.DeviceNode{
-				{
-					Path:     info.path,
-					HostPath: filepath.Join(devRoot, info.path),
-				},
-			},
 		},
 	}
-
 	return edits, nil
+}
+
+func (s *ComputeDomainDaemonSettings) GetDomainID() string {
+	return s.domainID
+}
+
+// GetCDIContainerEditsForImex() returns the CDI spec edits only required for
+// launching the CD daemon when it actually wraps an IMEX daemon.
+func (s *ComputeDomainDaemonSettings) GetCDIContainerEditsForImex(ctx context.Context, devRoot string, info *common.NVcapDeviceInfo) *cdiapi.ContainerEdits {
+	edits := &cdiapi.ContainerEdits{
+		ContainerEdits: &cdispec.ContainerEdits{
+			DeviceNodes: []*cdispec.DeviceNode{info.CDICharDevNode()},
+		},
+	}
+	return edits
 }
 
 func (s *ComputeDomainDaemonSettings) Prepare(ctx context.Context) error {
@@ -238,11 +307,53 @@ func (m *ComputeDomainManager) AssertComputeDomainReady(ctx context.Context, cdU
 		return fmt.Errorf("ComputeDomain not found: %s", cdUID)
 	}
 
-	if cd.Status.Status != nvapi.ComputeDomainStatusReady {
-		return fmt.Errorf("ComputeDomain not Ready")
+	// Check if the current node is ready in the ComputeDomain
+	if !m.isCurrentNodeReady(ctx, cd) {
+		return fmt.Errorf("current node not ready in ComputeDomain")
 	}
 
 	return nil
+}
+
+// isCurrentNodeReady checks if the current node is marked as ready in the ComputeDomain.
+// When the feature gate is enabled, we check both the clique and the status to ensure
+// that compute domains started before the feature gate was enabled continue to work
+// even after the feature gate is enabled.
+func (m *ComputeDomainManager) isCurrentNodeReady(ctx context.Context, cd *nvapi.ComputeDomain) bool {
+	if featuregates.Enabled(featuregates.ComputeDomainCliques) {
+		if m.isCurrentNodeReadyInClique(ctx, cd) {
+			return true
+		}
+	}
+	return m.isCurrentNodeReadyInStatus(cd)
+}
+
+// isCurrentNodeReadyInStatus checks if the current node is marked as ready in the ComputeDomain status.
+func (m *ComputeDomainManager) isCurrentNodeReadyInStatus(cd *nvapi.ComputeDomain) bool {
+	for _, node := range cd.Status.Nodes {
+		if node.Name == m.config.flags.nodeName {
+			return node.Status == nvapi.ComputeDomainStatusReady
+		}
+	}
+	return false
+}
+
+// isCurrentNodeReadyInClique checks if the current node is marked as ready in the ComputeDomainClique.
+func (m *ComputeDomainManager) isCurrentNodeReadyInClique(ctx context.Context, cd *nvapi.ComputeDomain) bool {
+	cliqueName := fmt.Sprintf("%s.%s", cd.UID, m.CliqueID())
+
+	clique, err := m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomainCliques(m.config.flags.namespace).Get(ctx, cliqueName, metav1.GetOptions{})
+	if err != nil {
+		klog.Errorf("error getting ComputeDomainClique %s: %v", cliqueName, err)
+		return false
+	}
+
+	for _, daemon := range clique.Daemons {
+		if daemon.NodeName == m.config.flags.nodeName {
+			return daemon.Status == nvapi.ComputeDomainStatusReady
+		}
+	}
+	return false
 }
 
 func (m *ComputeDomainManager) AssertComputeDomainNamespace(ctx context.Context, claimNamespace, cdUID string) error {
@@ -289,6 +400,8 @@ func (m *ComputeDomainManager) AddNodeLabel(ctx context.Context, cdUID string) e
 	return nil
 }
 
+// RemoveNodeLabel() attempts removal and returns no error if the label was
+// removed or didn't exist in the first place.
 func (m *ComputeDomainManager) RemoveNodeLabel(ctx context.Context, cdUID string) error {
 	node, err := m.config.clientsets.Core.CoreV1().Nodes().Get(ctx, m.config.flags.nodeName, metav1.GetOptions{})
 	if err != nil {
@@ -308,6 +421,98 @@ func (m *ComputeDomainManager) RemoveNodeLabel(ctx context.Context, cdUID string
 
 	if _, err := m.config.clientsets.Core.CoreV1().Nodes().Update(ctx, newNode, metav1.UpdateOptions{}); err != nil {
 		return fmt.Errorf("error updating Node to remove label: %w", err)
+	}
+
+	return nil
+}
+
+// SetGPUCliqueLabel sets the nvidia.com/gpu.clique node label based on the
+// clique ID discovered from NVML at plugin startup. If no clique ID was
+// discovered (e.g. fabric not attached), the label is simply left unset.
+func (m *ComputeDomainManager) SetGPUCliqueLabel(ctx context.Context) error {
+	cliqueID := m.CliqueID()
+	if cliqueID == "" {
+		return nil
+	}
+
+	patch := map[string]any{
+		"metadata": map[string]any{
+			"labels": map[string]string{
+				gpuCliqueLabelKey: cliqueID,
+			},
+		},
+	}
+
+	patchBytes, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("failed to marshal patch: %w", err)
+	}
+
+	if _, err := m.config.clientsets.Core.CoreV1().Nodes().Patch(ctx, m.config.flags.nodeName, types.MergePatchType, patchBytes, metav1.PatchOptions{}); err != nil {
+		return fmt.Errorf("error patching node with label %s: %w", gpuCliqueLabelKey, err)
+	}
+
+	return nil
+}
+
+// RemoveGPUCliqueLabel removes the nvidia.com/gpu.clique node label, e.g. on
+// plugin shutdown.
+func (m *ComputeDomainManager) RemoveGPUCliqueLabel(ctx context.Context) error {
+	patch := map[string]any{
+		"metadata": map[string]any{
+			"labels": map[string]any{
+				gpuCliqueLabelKey: nil,
+			},
+		},
+	}
+
+	patchBytes, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("failed to marshal patch: %w", err)
+	}
+
+	if _, err := m.config.clientsets.Core.CoreV1().Nodes().Patch(ctx, m.config.flags.nodeName, types.MergePatchType, patchBytes, metav1.PatchOptions{}); err != nil {
+		return fmt.Errorf("error removing Node label %s: %w", gpuCliqueLabelKey, err)
+	}
+
+	return nil
+}
+
+// periodicGPUCliqueIDRefresh periodically re-reads the GPU clique ID from
+// NVML and updates the nvidia.com/gpu.clique node label if it changed.
+func (m *ComputeDomainManager) periodicGPUCliqueIDRefresh(ctx context.Context) {
+	ticker := time.NewTicker(gpuCliqueLabelRefreshInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if err := m.refreshGPUCliqueID(ctx); err != nil {
+				klog.Errorf("error refreshing %s node label: %v", gpuCliqueLabelKey, err)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// refreshGPUCliqueLabel re-reads the GPU clique ID and, if it differs from
+// the last known value, updates the in-memory state and the node label.
+func (m *ComputeDomainManager) refreshGPUCliqueID(ctx context.Context) error {
+	newCliqueID, err := m.getCliqueIDFunc()
+	if err != nil {
+		return fmt.Errorf("error getting cliqueID: %w", err)
+	}
+
+	if oldCliqueID := m.CliqueID(); newCliqueID != "" && newCliqueID != oldCliqueID {
+		klog.Infof("GPU clique ID changed from %q to %q, updating %s node label", oldCliqueID, newCliqueID, gpuCliqueLabelKey)
+		m.setCliqueID(newCliqueID)
+	}
+
+	if m.config.flags.gpuCliqueLabelEnabled {
+		if err := m.SetGPUCliqueLabel(ctx); err != nil {
+			return fmt.Errorf("error updating %s node label: %w", gpuCliqueLabelKey, err)
+		}
 	}
 
 	return nil
@@ -338,7 +543,7 @@ func (m *ComputeDomainManager) periodicCleanup(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			klog.V(6).Infof("Running periodic sync to remove artifacts owned by stale ComputeDomain")
+			klog.V(6).Infof("Running periodic cleanup to remove stale ComputeDomain artifacts")
 
 			_, err := os.Stat(m.configFilesRoot)
 			if os.IsNotExist(err) {
@@ -360,6 +565,7 @@ func (m *ComputeDomainManager) periodicCleanup(ctx context.Context) {
 					continue
 				}
 
+				// Convention: per-CD directory with CD UID as basename
 				uid := e.Name()
 				path := filepath.Join(m.configFilesRoot, e.Name())
 
@@ -369,19 +575,15 @@ func (m *ComputeDomainManager) periodicCleanup(ctx context.Context) {
 					continue
 				}
 
+				// CD still exists, do not clean up
 				if computeDomain != nil {
 					continue
 				}
 
-				klog.Infof("Stale artifacts found for ComputeDomain '%s', running cleanup", uid)
+				klog.V(6).Infof("Stale directory found for ComputeDomain '%s', running cleanup", uid)
 
 				if err := os.RemoveAll(path); err != nil {
 					klog.Errorf("error removing artifacts directory for ComputeDomain '%s': %v", uid, err)
-					continue
-				}
-
-				if err := m.RemoveNodeLabel(ctx, uid); err != nil {
-					klog.Errorf("error removing Node label for ComputeDomain '%s': %v", uid, err)
 					continue
 				}
 			}

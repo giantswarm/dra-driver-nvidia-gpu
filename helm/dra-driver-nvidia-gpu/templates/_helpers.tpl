@@ -1,7 +1,7 @@
 {{/*
 Expand the name of the chart.
 */}}
-{{- define "nvidia-dra-driver-gpu.name" -}}
+{{- define "dra-driver-nvidia-gpu.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
@@ -10,7 +10,7 @@ Create a default fully qualified app name.
 We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
 If release name contains chart name it will be used as a full name.
 */}}
-{{- define "nvidia-dra-driver-gpu.fullname" -}}
+{{- define "dra-driver-nvidia-gpu.fullname" -}}
 {{- if .Values.fullnameOverride -}}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
@@ -26,7 +26,7 @@ If release name contains chart name it will be used as a full name.
 {{/*
 Allow the release namespace to be overridden for multi-namespace deployments in combined charts
 */}}
-{{- define "nvidia-dra-driver-gpu.namespace" -}}
+{{- define "dra-driver-nvidia-gpu.namespace" -}}
   {{- if .Values.namespaceOverride -}}
     {{- .Values.namespaceOverride -}}
   {{- else -}}
@@ -37,7 +37,7 @@ Allow the release namespace to be overridden for multi-namespace deployments in 
 {{/*
 Create chart name and version as used by the chart label.
 */}}
-{{- define "nvidia-dra-driver-gpu.chart" -}}
+{{- define "dra-driver-nvidia-gpu.chart" -}}
 {{- $name := default .Chart.Name .Values.nameOverride -}}
 {{- printf "%s-%s" $name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
@@ -48,12 +48,12 @@ https://helm.sh/docs/chart_best_practices/labels/
 Apply this to all high-level objects (Deployment, DaemonSet, ...).
 Pod template labels are included here to deliver name+instance.
 */}}
-{{- define "nvidia-dra-driver-gpu.labels" -}}
-helm.sh/chart: {{ include "nvidia-dra-driver-gpu.chart" . }}
+{{- define "dra-driver-nvidia-gpu.labels" -}}
+helm.sh/chart: {{ include "dra-driver-nvidia-gpu.chart" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 application.giantswarm.io/team: {{ index .Chart.Annotations "application.giantswarm.io/team" | quote }}
-{{ include "nvidia-dra-driver-gpu.templateLabels" . }}
+{{ include "dra-driver-nvidia-gpu.templateLabels" . }}
 {{- end }}
 
 {{/*
@@ -62,8 +62,8 @@ the set of standard labels above, to not clutter individual pods too
 much). Note that these labels cannot be used to distinguish
 components within this Helm chart.
 */}}
-{{- define "nvidia-dra-driver-gpu.templateLabels" -}}
-app.kubernetes.io/name: {{ include "nvidia-dra-driver-gpu.name" . }}
+{{- define "dra-driver-nvidia-gpu.templateLabels" -}}
+app.kubernetes.io/name: {{ include "dra-driver-nvidia-gpu.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
@@ -76,7 +76,7 @@ unique key).
 
 TOOD: remove the override feature, or make the override work per-component.
 */}}
-{{- define "nvidia-dra-driver-gpu.selectorLabels" -}}
+{{- define "dra-driver-nvidia-gpu.selectorLabels" -}}
 {{- if and (hasKey . "componentName") (hasKey . "context") -}}
 {{- if .context.Values.selectorLabelsOverride -}}
 {{ toYaml .context.Values.selectorLabelsOverride }}
@@ -92,7 +92,7 @@ fail "selectorLabels: both arguments are required: context, componentName"
 {{/*
 Full image name with tag
 */}}
-{{- define "nvidia-dra-driver-gpu.fullimage" -}}
+{{- define "dra-driver-nvidia-gpu.fullimage" -}}
 {{- $tag := printf "v%s" .Chart.AppVersion }}
 {{- .Values.image.repository -}}:{{- .Values.image.tag | default $tag -}}
 {{- end }}
@@ -100,8 +100,8 @@ Full image name with tag
 {{/*
 Create the name of the service account to use
 */}}
-{{- define "nvidia-dra-driver-gpu.serviceAccountName" -}}
-{{- $name := printf "%s-service-account" (include "nvidia-dra-driver-gpu.fullname" .) }}
+{{- define "dra-driver-nvidia-gpu.serviceAccountName" -}}
+{{- $name := printf "%s-service-account" (include "dra-driver-nvidia-gpu.fullname" .) }}
 {{- if .Values.serviceAccount.create }}
 {{- default $name .Values.serviceAccount.name }}
 {{- else }}
@@ -110,9 +110,21 @@ Create the name of the service account to use
 {{- end }}
 
 {{/*
+Create the name of the webhook service account to use
+*/}}
+{{- define "dra-driver-nvidia-gpu.webhookServiceAccountName" -}}
+{{- $name := printf "%s-webhook-service-account" (include "dra-driver-nvidia-gpu.fullname" .) }}
+{{- if .Values.webhook.serviceAccount.create }}
+{{- default $name .Values.webhook.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.webhook.serviceAccount.name }}
+{{- end }}
+{{- end }}
+
+{{/*
 Check for the existence of an element in a list
 */}}
-{{- define "nvidia-dra-driver-gpu.listHas" -}}
+{{- define "dra-driver-nvidia-gpu.listHas" -}}
   {{- $listToCheck := index . 0 }}
   {{- $valueToCheck := index . 1 }}
 
@@ -128,13 +140,13 @@ Check for the existence of an element in a list
 {{/*
 Filter a list by a set of valid values
 */}}
-{{- define "nvidia-dra-driver-gpu.filterList" -}}
+{{- define "dra-driver-nvidia-gpu.filterList" -}}
   {{- $listToFilter := index . 0 }}
   {{- $validValues := index . 1 }}
 
   {{- $result := list -}}
   {{- range $validValues}}
-    {{- if include "nvidia-dra-driver-gpu.listHas" (list $listToFilter .) }}
+    {{- if include "dra-driver-nvidia-gpu.listHas" (list $listToFilter .) }}
       {{- $result = append $result . }}
     {{- end }}
   {{- end }}
@@ -142,16 +154,84 @@ Filter a list by a set of valid values
 {{- end -}}
 
 {{/*
-Get the latest available resource.k8s.io API version
-Returns the highest available version or empty string if none found
+Get all namespaces (driver namespace + additional namespaces from environment variable).
+After concatenation, duplicates from are removed with uniq to avoid release namespaces been
+listed in ADDITIONAL_NAMESPACES, or repeated entries in the comma-separated list.
 */}}
-{{- define "nvidia-dra-driver-gpu.resourceApiVersion" -}}
-{{- if .Capabilities.APIVersions.Has "resource.k8s.io/v1" -}}
+{{- define "dra-driver-nvidia-gpu.namespaces" -}}
+  {{- $driverNs := include "dra-driver-nvidia-gpu.namespace" . | trim }}
+    {{- $namespaces := list $driverNs }}
+    {{- if .Values.controller.containers.computeDomain.env }}
+      {{- range .Values.controller.containers.computeDomain.env }}
+        {{- if eq .name "ADDITIONAL_NAMESPACES" }}
+          {{- if .value }}
+            {{- range $raw := splitList "," .value }}
+              {{- $ns := $raw | trim }}
+              {{- if $ns }}
+                  {{- $namespaces = concat $namespaces (list $ns) }}
+              {{- end }}
+            {{- end }}
+          {{- end }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+  {{- join "," (uniq $namespaces) -}}
+{{- end -}}
+
+{{/*
+Get the latest available resource.k8s.io API version
+
+Priority:
+  1. If .Values.resourceApiVersion is set, use that.
+  2. Otherwise, returns the highest available version or empty string if none found
+*/}}
+{{- define "dra-driver-nvidia-gpu.resourceApiVersion" -}}
+{{- if .Values.resourceApiVersion }}
+{{- .Values.resourceApiVersion }}
+{{- else if .Capabilities.APIVersions.Has "resource.k8s.io/v1" -}}
 resource.k8s.io/v1
-{{- else if .Capabilities.APIVersions.Has "resource.k8s.io/v1beta1" -}}
-resource.k8s.io/v1beta1
 {{- else if .Capabilities.APIVersions.Has "resource.k8s.io/v1beta2" -}}
 resource.k8s.io/v1beta2
+{{- else if .Capabilities.APIVersions.Has "resource.k8s.io/v1beta1" -}}
+resource.k8s.io/v1beta1
 {{- else -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Returns "true" when resources.computeDomains.imex.mode is exactly
+"hostManaged", empty string otherwise. Used only to control structural
+rendering (omitting the compute-domain-daemon DeviceClass/RBAC).
+*/}}
+{{- define "dra-driver-nvidia-gpu.hostManagedIMEX" -}}
+{{- if eq (toString (dig "mode" "" (.Values.resources.computeDomains.imex | default dict))) "hostManaged" -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
+Validates resources.computeDomains.imex.mode / .isolation against
+featureGates.HostManagedIMEXDaemon so `helm install`/`helm template` fails fast
+with a clear message instead of the controller/kubelet-plugin pods crash-looping
+on an invalid combination. Produces no output on success.
+*/}}
+{{- define "dra-driver-nvidia-gpu.validateIMEXConfig" -}}
+{{- $imex := .Values.resources.computeDomains.imex | default dict -}}
+{{- $mode := toString (dig "mode" "driverManaged" $imex) -}}
+{{- $isolation := toString (dig "isolation" "domain" $imex) -}}
+{{- $gateEnabled := and .Values.featureGates (and (hasKey .Values.featureGates "HostManagedIMEXDaemon") .Values.featureGates.HostManagedIMEXDaemon) -}}
+{{- if eq $mode "hostManaged" -}}
+  {{- if not $gateEnabled -}}
+    {{- fail "resources.computeDomains.imex.mode=hostManaged requires featureGates.HostManagedIMEXDaemon=true" -}}
+  {{- end -}}
+{{- else if ne $mode "driverManaged" -}}
+  {{- fail (printf "unknown resources.computeDomains.imex.mode %q: must be \"driverManaged\" or \"hostManaged\"" $mode) -}}
+{{- end -}}
+{{- if and (ne $isolation "") (ne $isolation "domain") -}}
+  {{- if eq $isolation "channel" -}}
+    {{- fail "resources.computeDomains.imex.isolation=channel is not supported yet: per-workload IMEX channel allocation is not implemented. Use the default, \"domain\"." -}}
+  {{- else -}}
+    {{- fail (printf "unknown resources.computeDomains.imex.isolation %q: must be \"domain\" or \"channel\"" $isolation) -}}
+  {{- end -}}
 {{- end -}}
 {{- end -}}

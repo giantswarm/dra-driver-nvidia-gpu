@@ -1,18 +1,18 @@
 /*
- * Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+Copyright The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package main
 
@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"slices"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"text/template"
@@ -46,14 +46,31 @@ import (
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
 	cdispec "tags.cncf.io/container-device-interface/specs-go"
 
-	configapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
+	configapi "sigs.k8s.io/dra-driver-nvidia-gpu/api/nvidia.com/resource/v1beta1"
+	"sigs.k8s.io/dra-driver-nvidia-gpu/pkg/featuregates"
 )
 
 const (
-	MpsRoot                      = DriverPluginPath + "/mps"
+	MpsControlFilesDirName       = "mps"
 	MpsControlDaemonTemplatePath = "/templates/mps-control-daemon.tmpl.yaml"
 	MpsControlDaemonNameFmt      = "mps-control-daemon-%v" // Fill with ClaimUID
+	MpsDefaultShmMountPath       = "/dev/shm"
+
+	// driverRootMountDir is the directory where the driver root is mounted inside the kubelet plugin container.
+	driverRootMountDir = "/driver-root"
 )
+
+// fileChecker checks whether a file exists at the given path.
+type fileChecker interface {
+	Stat(path string) error
+}
+
+type osFileChecker struct{}
+
+func (osFileChecker) Stat(path string) error {
+	_, err := os.Stat(path)
+	return err
+}
 
 type TimeSlicingManager struct {
 	nvdevlib *deviceLib
@@ -88,11 +105,28 @@ type MpsControlDaemonTemplateData struct {
 	CUDA_VISIBLE_DEVICES            string //nolint:stylecheck
 	DefaultActiveThreadPercentage   string
 	DefaultPinnedDeviceMemoryLimits map[string]string
+	MultiUser                       bool
 	NvidiaDriverRoot                string
 	MpsShmDirectory                 string
 	MpsPipeDirectory                string
 	MpsLogDirectory                 string
 	MpsImageName                    string
+	MpsImagePullPolicy              string
+	MpsImagePullSecretNames         []string
+	ServiceAccountName              string
+	FeatureGates                    map[string]bool
+	MpsShmMountPath                 string
+}
+
+// setMpsShmMountPath returns the container path at which the MPS shm should be mounted in the MPS control daemon pod.
+// If <driverRootMountDir>/dev/shm exists, the MPS daemon runs inside a chroot and shm must be mounted there.
+// Otherwise (e.g. GKE COS) the daemon runs directly in the container namespace and expects /dev/shm.
+func setMpsShmMountPath(checker fileChecker) string {
+	chrootShmPath := filepath.Join(driverRootMountDir, "dev", "shm")
+	if checker.Stat(chrootShmPath) == nil {
+		return chrootShmPath
+	}
+	return MpsDefaultShmMountPath
 }
 
 func NewTimeSlicingManager(deviceLib *deviceLib) *TimeSlicingManager {
@@ -101,20 +135,16 @@ func NewTimeSlicingManager(deviceLib *deviceLib) *TimeSlicingManager {
 	}
 }
 
-func (t *TimeSlicingManager) SetTimeSlice(devices UUIDProvider, config *configapi.TimeSlicingConfig) error {
-	// Ensure all devices are full devices
-	if !slices.Equal(devices.UUIDs(), devices.GpuUUIDs()) {
-		return fmt.Errorf("can only set the time-slice interval on full GPUs")
-	}
-
+// `uuids` must be full-GPU (non-MIG) UUIDs. The caller must ensure that.
+func (t *TimeSlicingManager) SetTimeSlice(uuids []string, config *configapi.TimeSlicingConfig) error {
 	// Set the compute mode of the GPU to DEFAULT.
-	err := t.nvdevlib.setComputeMode(devices.UUIDs(), "DEFAULT")
+	err := t.nvdevlib.setComputeMode(uuids, "DEFAULT")
 	if err != nil {
 		return fmt.Errorf("error setting compute mode: %w", err)
 	}
 
 	// Set the time slice based on the config provided.
-	err = t.nvdevlib.setTimeSlice(devices.UUIDs(), config.Interval.Int())
+	err = t.nvdevlib.setTimeSlice(uuids, config.Interval.Int())
 	if err != nil {
 		return fmt.Errorf("error setting time slice: %w", err)
 	}
@@ -122,7 +152,9 @@ func (t *TimeSlicingManager) SetTimeSlice(devices UUIDProvider, config *configap
 	return nil
 }
 
-func NewMpsManager(config *Config, deviceLib *deviceLib, controlFilesRoot, hostDriverRoot, templatePath string) *MpsManager {
+func NewMpsManager(config *Config, deviceLib *deviceLib, hostDriverRoot, templatePath string) *MpsManager {
+	controlFilesRoot := filepath.Join(config.DriverPluginPath(), MpsControlFilesDirName)
+
 	return &MpsManager{
 		controlFilesRoot: controlFilesRoot,
 		hostDriverRoot:   hostDriverRoot,
@@ -196,6 +228,7 @@ func (m *MpsControlDaemon) Start(ctx context.Context, config *configapi.MpsConfi
 	klog.Infof("Starting MPS control daemon for '%v', with settings: %+v", m.id, config)
 
 	deviceUUIDs := m.devices.UUIDs()
+
 	templateData := MpsControlDaemonTemplateData{
 		NodeName:                        m.nodeName,
 		MpsControlDaemonNamespace:       m.namespace,
@@ -203,11 +236,17 @@ func (m *MpsControlDaemon) Start(ctx context.Context, config *configapi.MpsConfi
 		CUDA_VISIBLE_DEVICES:            strings.Join(deviceUUIDs, ","),
 		DefaultActiveThreadPercentage:   "",
 		DefaultPinnedDeviceMemoryLimits: nil,
+		MultiUser:                       false,
 		NvidiaDriverRoot:                m.manager.hostDriverRoot,
 		MpsShmDirectory:                 m.shmDir,
 		MpsPipeDirectory:                m.pipeDir,
 		MpsLogDirectory:                 m.logDir,
 		MpsImageName:                    m.manager.config.flags.imageName,
+		MpsImagePullPolicy:              m.manager.config.imagePullPolicy,
+		MpsImagePullSecretNames:         m.manager.config.imagePullSecretNames,
+		ServiceAccountName:              m.manager.config.flags.serviceAccountName,
+		FeatureGates:                    featuregates.ToMap(),
+		MpsShmMountPath:                 setMpsShmMountPath(osFileChecker{}),
 	}
 
 	if config != nil && config.DefaultActiveThreadPercentage != nil {
@@ -222,26 +261,19 @@ func (m *MpsControlDaemon) Start(ctx context.Context, config *configapi.MpsConfi
 		templateData.DefaultPinnedDeviceMemoryLimits = limits
 	}
 
-	tmpl, err := template.ParseFiles(m.manager.templatePath)
-	if err != nil {
-		return fmt.Errorf("failed to parse template file: %w", err)
+	if config != nil && config.MultiUser != nil {
+		templateData.MultiUser = *config.MultiUser
+		if templateData.MultiUser {
+			// multiuser mode requires architecture to be volta or newer
+			if err := ensureCapability(m.manager.nvdevlib.gpuInfosByUUID, m.devices.GpuUUIDs(), voltaCudaComputeCapability); err != nil {
+				return fmt.Errorf("multiuser mode was requested but is not supported: %w", err)
+			}
+		}
 	}
 
-	var deploymentYaml bytes.Buffer
-	if err := tmpl.Execute(&deploymentYaml, templateData); err != nil {
-		return fmt.Errorf("failed to execute template: %w", err)
-	}
-
-	var unstructuredObj unstructured.Unstructured
-	err = yaml.Unmarshal(deploymentYaml.Bytes(), &unstructuredObj)
+	deployment, err := renderMpsControlDaemonDeployment(m.manager.templatePath, templateData)
 	if err != nil {
-		return fmt.Errorf("failed to unmarshal yaml: %w", err)
-	}
-
-	var deployment appsv1.Deployment
-	err = runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredObj.UnstructuredContent(), &deployment)
-	if err != nil {
-		return fmt.Errorf("failed to convert unstructured data to typed object: %w", err)
+		return err
 	}
 
 	err = os.MkdirAll(m.shmDir, 0755)
@@ -277,7 +309,7 @@ func (m *MpsControlDaemon) Start(ctx context.Context, config *configapi.MpsConfi
 		return fmt.Errorf("error setting compute mode: %w", err)
 	}
 
-	_, err = m.manager.config.clientsets.Core.AppsV1().Deployments(m.namespace).Create(ctx, &deployment, metav1.CreateOptions{})
+	_, err = m.manager.config.clientsets.Core.AppsV1().Deployments(m.namespace).Create(ctx, deployment, metav1.CreateOptions{})
 	if errors.IsAlreadyExists(err) {
 		return nil
 	}
@@ -286,6 +318,32 @@ func (m *MpsControlDaemon) Start(ctx context.Context, config *configapi.MpsConfi
 	}
 
 	return nil
+}
+
+func renderMpsControlDaemonDeployment(templatePath string, templateData MpsControlDaemonTemplateData) (*appsv1.Deployment, error) {
+	tmpl, err := template.ParseFiles(templatePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse template file: %w", err)
+	}
+
+	var deploymentYaml bytes.Buffer
+	if err := tmpl.Execute(&deploymentYaml, templateData); err != nil {
+		return nil, fmt.Errorf("failed to execute template: %w", err)
+	}
+
+	var unstructuredObj unstructured.Unstructured
+	err = yaml.Unmarshal(deploymentYaml.Bytes(), &unstructuredObj)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal yaml: %w", err)
+	}
+
+	var deployment appsv1.Deployment
+	err = runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredObj.UnstructuredContent(), &deployment)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert unstructured data to typed object: %w", err)
+	}
+
+	return &deployment, nil
 }
 
 func (m *MpsControlDaemon) AssertReady(ctx context.Context) error {
@@ -383,6 +441,13 @@ func (m *MpsControlDaemon) Stop(ctx context.Context) error {
 	err = m.manager.config.clientsets.Core.AppsV1().Deployments(m.namespace).Delete(ctx, m.name, deleteOptions)
 	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete deployment: %w", err)
+	}
+
+	// Start() sets the compute mode of these GPUs to EXCLUSIVE_PROCESS as
+	// required by MPS. Reset it back to DEFAULT here so the GPUs are not left
+	// stuck in EXCLUSIVE_PROCESS after teardown.
+	if err := m.manager.nvdevlib.setComputeMode(m.devices.GpuUUIDs(), "DEFAULT"); err != nil {
+		return fmt.Errorf("error resetting compute mode to DEFAULT: %w", err)
 	}
 
 	mountExecutable, err := exec.LookPath("mount")

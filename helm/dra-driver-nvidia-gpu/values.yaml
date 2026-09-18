@@ -1,10 +1,10 @@
-# Copyright 2023 NVIDIA CORPORATION
+# Copyright The Kubernetes Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#    https://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Default values for k8s-dra-driver-gpu.
+# Default values for dra-driver-nvidia-gpu.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
@@ -26,49 +26,40 @@ nvidiaDriverRoot: /
 # If not specified, the default path inferred from the nvidia-container-toolkit library version will be used.
 nvidiaCDIHookPath: ""
 
-# Optional: extra directories (inside the in-container `/driver-root`) to
-# search for the `nvidia-smi` binary, in addition to the FHS defaults
-# (`bin`, `sbin`, `usr/bin`, `usr/sbin`). Useful for driver bundles whose
-# layout differs from FHS. Paths may be relative to `/driver-root` (e.g.
-# `opt/bin`) or absolute container paths (e.g. `/opt/bin`, paired with an
-# entry in `extraHostPathMounts` below).
-extraDriverBinaryPaths: []
-
-# Optional: extra directories (inside the in-container `/driver-root`) to
-# search for `libnvidia-ml.so.1`, in addition to the FHS defaults. Same
-# path semantics as `extraDriverBinaryPaths`.
-extraDriverLibraryPaths: []
-
-# Optional: extra hostPath bind-mounts injected into the init container and
-# both runtime containers (`compute-domains`, `gpus`). Useful when the
-# driver bundle pointed at by `nvidiaDriverRoot` contains absolute symlinks
-# whose targets live outside the bundle (e.g. on Flatcar,
-# `/opt/nvidia/current/usr/bin/nvidia-smi -> /opt/bin/nvidia-smi`).
-# Mounting `/opt/bin -> /opt/bin` heals those dangling symlinks without
-# rewriting any paths.
-#
-# Example (Flatcar Container Linux):
-#   nvidiaDriverRoot: /opt/nvidia/current
-#   extraHostPathMounts:
-#     - name: host-opt-bin
-#       hostPath: /opt/bin
-#       mountPath: /opt/bin
-#       readOnly: true
-extraHostPathMounts: []
+# Optional host path to a file used in place of /proc/devices inside kubelet-plugin
+# containers. Used with mock NVML to inject fake nvidia-caps-imex-channels entries
+# so the compute-domain-kubelet-plugin can initialize without a real kernel driver.
+# The file is mounted into /alt-proc-devices and the path is passed via
+# ALT_PROC_DEVICES_PATH env var. Example: /var/lib/nvml-mock/imex/proc-devices
+altProcDevices: ""
 
 nameOverride: ""
 fullnameOverride: ""
 namespaceOverride: ""
 selectorLabelsOverride: {}
 gpuResourcesEnabledOverride: false
+# Configure consumable shares support ("disabled", "memory", "unlimited", or a positive integer)
+consumableShares: ""
 
 allowDefaultNamespace: false
 
+# resourceApiVersion sets the resource.k8s.io API version used for DRA resources (DeviceClass,
+# ResourceClaim, ResourceClaimTemplate).
+#
+# By default, the chart auto-detects the highest supported version from the
+# cluster via .Capabilities.APIVersions (v1 > v1beta2 > v1beta1). However, some
+# environments may incorrectly report supported versions, causing Helm to render
+# manifests with an API version that the API server does not actually serve.
+#
+# Set this field to explicitly override auto-detection:
+#   resourceApiVersion: "resource.k8s.io/v1beta1"
+#
+# Leave empty to use auto-detection.
+resourceApiVersion: ""
+
 imagePullSecrets: []
 image:
-  # Downstream Giant Swarm build: points at the patched image carrying the
-  # Flatcar prestart fix and EXTRA_DRIVER_*_PATHS env handling. Revert to
-  # nvcr.io/nvidia/k8s-dra-driver-gpu when upstream ships those changes.
+  # Giant Swarm mirror of upstream's registry.k8s.io/dra-driver-nvidia/dra-driver-nvidia-gpu.
   repository: gsoci.azurecr.io/giantswarm/k8s-dra-driver-gpu
   pullPolicy: IfNotPresent
   # Note: an empty string is translated to the `appVersion` string from
@@ -91,8 +82,159 @@ resources:
     enabled: true
   computeDomains:
     enabled: true
+    # Changing `imex.mode` or `imex.isolation` on a cluster with active ComputeDomain workloads
+    # is not supported and is not enforced by the driver, drain and remove existing ComputeDomains first.
+    imex:
+      # mode selects the deployment mode of the IMEX daemon in the cluster. It tells
+      #   who owns the nvidia-imex daemon lifecycle:
+      #   driverManaged (default): the driver creates and manages a
+      #     per-ComputeDomain nvidia-imex DaemonSet.
+      #   hostManaged: the cluster administrator runs nvidia-imex as a host service
+      #     and the driver only advertises/injects an IMEX channel device
+      #     Requires featureGates.HostManagedIMEXDaemon=true
+      mode: driverManaged
+      # isolation selects the IMEX isolation strategy. The value can be one of:
+      #   domain (default): In this mode, all workloads running in the
+      #     same IMEX domain will share the same channel (0).
+      #   channel: not supported. In this mode, each workload will get a unique
+      #     channel within an IMEX domain.
+      isolation: "domain"
+      # hostSocketPath is the path (under the driver root) to the Unix domain
+      # socket the host nvidia-imex daemon's command/control service listens
+      # on. Only used when mode=hostManaged: the kubelet plugin uses it to
+      # validate host IMEX readiness (via `nvidia-imex-ctl -q --u=<path>`) during channel claim prepare.
+      # Requires the host's /etc/nvidia-imex/config.cfg to set IMEX_CMD_ENABLED to 1 and
+      # IMEX_CMD_UNIX_DOMAIN_PATH to this same path.
+      hostSocketPath: "/etc/nvidia-imex/imex_ctrl.sock"
+
+# Feature gates configuration following Kubernetes patterns
+# Configure feature gates as key-value pairs (feature_name: true/false)
+# Examples:
+# featureGates:
+#   ExampleFeature: false              # Project-specific alpha feature
+#   ContextualLogging: true            # Kubernetes logging feature (enabled by default)
+#   LoggingAlphaOptions: false         # Kubernetes logging alpha features
+#   LoggingBetaOptions: true           # Kubernetes logging beta features
+#   NVMLDeviceHealthCheck: false       # GPU Health Checking using NVML
+#   HostManagedIMEXDaemon: false       # Gate allowing resources.computeDomains.imex.mode=hostManaged
+#   DRAListTypeAttributes: false       # Publish list-valued DRA device attributes
+#   ConsumableShares: false            # Publish consumable capacity and multi-allocation support for devices
+featureGates: {}
+
+# Log verbosity for all components. Zero or greater, higher number means higher
+# verbosity. Regardless of this setting, messages of type Error, Warning, and
+# Info(level 0) are always logged. Can also be set for individual components via
+# environment variable (that takes precedence), see
+# https://github.com/kubernetes-sigs/dra-driver-nvidia-gpu/wiki/Troubleshooting#controlling-log-verbosity
+#
+# An (incomplete) representation of which types of messages to expect with
+# increasing verbosity level:
+#
+# Level 0:
+# - Configuration detail (during process startup)
+# - Kubelet plugins:
+#   - Permanent errors during device Prepare() and Unprepare()
+#
+# Level 1:
+# - CD controller:
+#   - Confirm cleanup of stale objects
+# - k8s client-go: feature gates
+# - Kubelet plugins:
+#   - Device (un)prepare confirmation, with resource claim UID
+#   - Workqueue reconciliation failures (noisy: mainly expected, retryable
+#     errors)
+# - CD daemon:
+#   - explicit 'wait for nodes update'
+#
+# Level 2:
+# - reflector.go informer state: "Caches populated"
+# - Kubelet plugins:
+#   - Acknowledge when Unprepare is a noop
+# - CD controller:
+#   - Added/updated API object callback confirmation
+#
+# Level 3:
+# - reflector.go informer state: "Listing and watching"
+#
+# Level 6:
+# - round_trippers.go output (API server request/response detail)
+# - Kubelet plugins:
+#   - GRPC request/response detail
+#   - Checkpoint file update confirmation
+# - CD daemon:
+#   - explicit 'IP set did not change'
+#
+# Level 7:
+# - Kubelet plugins:
+#   - Health check
+logVerbosity: "4"
+
+# Webhook configuration
+webhook:
+  enabled: false
+  replicas: 1
+  servicePort: 443
+  containerPort: 443
+  priorityClassName: "system-cluster-critical"
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: "100%"
+  podAnnotations: {}
+  podSecurityContext: {}
+  nodeSelector: {}
+  tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
+  affinity: {}
+  containers:
+    webhook:
+      securityContext:
+        privileged: false
+      resources: {}
+  serviceAccount:
+    # Specifies whether a service account should be created
+    create: true
+    # Annotations to add to the service account
+    name: ""
+  # failurePolicy defines how the API server should handle requests if the webhook call fails.
+  # Options:
+  #   - Fail   : reject the request if the webhook call fails either due to cert errors, timeout or if the service is unreachable.
+  #   - Ignore : allow the request to continue if the webhook call fails.
+  failurePolicy: Fail
+  # TLS certificate configuration
+  tls:
+    # Certificate management mode: "cert-manager" or "secret"
+    # - "cert-manager": Use cert-manager to automatically generate and manage certificates
+    # - "secret": Use a user-provided secret containing tls.crt and tls.key
+    mode: "cert-manager"
+    certManager:
+      # Issuer type: "selfsigned", "clusterissuer", or "issuer"
+      issuerType: "selfsigned"
+      # Issuer name (required when issuerType is "clusterissuer" or "issuer")
+      issuerName: ""
+      # Additional DNS names for the certificate
+      dnsNames: []
+    secret:
+      # Name of the secret containing tls.crt and tls.key
+      name: ""
+      # Base64-encoded CA certificate bundle for validating the webhook's TLS certificate (base64 encoded)
+      # Required when using secret mode.
+      # Note: Only include intermediate CA certificates, not root CA certificates
+      caBundle: ""
 
 controller:
+  replicas: 1
+  leaderElection:
+    enabled: false
+    leaseDuration: "15s"
+    renewDeadline: "10s"
+    retryPeriod: "2s"
+  metrics:
+    enabled: true
+    httpEndpoint: ":8080"
+    metricsPath: "/metrics"
+    profilePath: ""
   priorityClassName: "system-node-critical"
   podAnnotations: {}
   podSecurityContext: {}
@@ -101,57 +243,127 @@ controller:
   - key: node-role.kubernetes.io/control-plane
     operator: Exists
     effect: NoSchedule
+  - key: node-role.kubernetes.io/master
+    operator: Exists
+    effect: NoSchedule
+  - key: CriticalAddonsOnly
+    operator: Exists
   containers:
     computeDomain:
       securityContext: {}
+      env: []
       resources: {}
   affinity:
     nodeAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        nodeSelectorTerms:
-        - matchExpressions:
-          - key: "node-role.kubernetes.io/control-plane"
-            operator: "Exists"
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+          - key: node-role.kubernetes.io/control-plane
+            operator: Exists
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              dra-driver-nvidia-gpu-component: controller
+          topologyKey: kubernetes.io/hostname
+  # Network policy settings
+  networkPolicy:
+    # If the network policy is enabled or not.
+    #
+    # Giant Swarm default: true. Upstream defaults this to false, but Giant
+    # Swarm clusters run a `default-deny-all` NetworkPolicy in `kube-system`,
+    # so without this the kubelet plugin cannot reach the API server and never
+    # publishes any ResourceSlice -- the driver comes up "healthy" and silently
+    # allocates nothing.
+    enabled: true
 
 kubeletPlugin:
+  metrics:
+    enabled: true
+    gpuHttpEndpoint: ":8080"
+    computeDomainHttpEndpoint: ":8081"
+    metricsPath: "/metrics"
   priorityClassName: "system-node-critical"
   updateStrategy:
     type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: "100%"
   podAnnotations: {}
   podSecurityContext: {}
   nodeSelector: {}
-  tolerations: []
+  tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+  kubeletRegistrarDirectoryPath: /var/lib/kubelet/plugins_registry
+  kubeletPluginsDirectoryPath: /var/lib/kubelet/plugins
   containers:
     init:
       securityContext: {}
       resources: {}
     computeDomains:
+      env: []
       securityContext:
         privileged: true
       resources: {}
+      # Port running a gRPC health service checked by a livenessProbe.
+      # Set to a negative value to disable the service and the probe.
+      healthcheckPort: 51515
+      # Set the nvidia.com/gpu.clique node label, historically set by
+      # gpu-feature-discovery. Disabled by default.
+      gpuCliqueLabelEnabled: false
     gpus:
+      env: []
       securityContext:
         privileged: true
       resources: {}
+      # Port running a gRPC health service checked by a livenessProbe.
+      # Set to a negative value to disable the service and the probe.
+      healthcheckPort: 51516
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
         nodeSelectorTerms:
         - matchExpressions:
-          # On discrete-GPU based systems NFD adds the following label where 10de is the NVIDIA PCI vendor ID
+          # NFD: On discrete-GPU based systems NFD adds the following label where 10de is the NVIDIA PCI vendor ID
           - key: feature.node.kubernetes.io/pci-10de.present
             operator: In
             values:
             - "true"
         - matchExpressions:
-          # On some Tegra-based systems NFD detects the CPU vendor ID as NVIDIA
+          # NFD: NVIDIA PCI 3D controller (class 0302) present
+          - key: feature.node.kubernetes.io/pci-0302_10de.present
+            operator: In
+            values:
+            - "true"
+        - matchExpressions:
+          # NFD: NVIDIA PCI VGA compatible controller (class 0300) present
+          - key: feature.node.kubernetes.io/pci-0300_10de.present
+            operator: In
+            values:
+            - "true"
+        - matchExpressions:
+          # NFD: On some Tegra-based systems NFD detects the CPU vendor ID as NVIDIA
           - key: feature.node.kubernetes.io/cpu-model.vendor_id
             operator: In
             values:
             - "NVIDIA"
         - matchExpressions:
-          # We allow a GPU deployment to be forced by setting the following label to "true"
+          # GPU Operator: Label added by NVIDIA GPU Operator when it detects a GPU
           - key: "nvidia.com/gpu.present"
             operator: In
             values:
             - "true"
+  # Network policy settings
+  networkPolicy:
+    # If the network policy is enabled or not.
+    #
+    # Giant Swarm default: true. Upstream defaults this to false, but Giant
+    # Swarm clusters run a `default-deny-all` NetworkPolicy in `kube-system`,
+    # so without this the kubelet plugin cannot reach the API server and never
+    # publishes any ResourceSlice -- the driver comes up "healthy" and silently
+    # allocates nothing.
+    enabled: true

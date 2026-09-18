@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: DRA Driver for NVIDIA GPUs Documentation
+    url: https://dra-driver-nvidia-gpu.sigs.k8s.io/docs/
+    about: Check the our docs for installation guides and common troubleshooting steps before opening an issue.
+  - name: Kubernetes DRA Documentation
+    url: https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/
+    about: Upstream Kubernetes Dynamic Resource Allocation documentation.
+  - name: WG Device Management Ecosystem
+    url: https://github.com/kubernetes-sigs/wg-device-management/tree/main/device-ecosystem
+    about: Device ecosystem overview for DRA drivers across vendors.

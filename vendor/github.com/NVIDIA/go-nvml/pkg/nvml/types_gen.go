@@ -136,6 +136,32 @@ type C2cModeInfo_v1 struct {
 	IsC2cEnabled uint32
 }
 
+type DeviceAddressingMode_v1 struct {
+	Version uint32
+	Value   uint32
+}
+
+type DeviceAddressingMode struct {
+	Version uint32
+	Value   uint32
+}
+
+type RepairStatus_v1 struct {
+	Version               uint32
+	BChannelRepairPending uint32
+	BTpcRepairPending     uint32
+}
+
+type RepairStatus struct {
+	Version               uint32
+	BChannelRepairPending uint32
+	BTpcRepairPending     uint32
+}
+
+type UnrepairableMemoryStatus_v1 struct {
+	BUnrepairableMemory uint32
+}
+
 type RowRemapperHistogramValues struct {
 	Max     uint32
 	High    uint32
@@ -218,6 +244,20 @@ type UUID struct {
 	Pad_cgo_0 [3]byte
 }
 
+type Pdi_v1 struct {
+	Version uint32
+	Value   uint64
+}
+
+type Pdi struct {
+	Version uint32
+	Value   uint64
+}
+
+type BBXTimeData_v1 struct {
+	TimeRun uint32
+}
+
 type DramEncryptionInfo_v1 struct {
 	Version         uint32
 	EncryptionState uint32
@@ -297,6 +337,12 @@ type DeviceCurrentClockFreqs_v1 struct {
 type DeviceCurrentClockFreqs struct {
 	Version uint32
 	Str     [2048]int8
+}
+
+type DevicePowerMizerModes_v1 struct {
+	CurrentMode              uint32
+	Mode                     uint32
+	SupportedPowerMizerModes uint32
 }
 
 type ProcessUtilizationSample struct {
@@ -402,6 +448,46 @@ type PlatformInfo struct {
 	PeerType            uint8
 	ModuleId            uint8
 	Pad_cgo_0           [3]byte
+}
+
+type Hostname_v1 struct {
+	Value [64]int8
+}
+
+type EccSramUniqueUncorrectedErrorEntry_v1 struct {
+	Unit        uint32
+	Location    uint32
+	Sublocation uint32
+	Extlocation uint32
+	Address     uint32
+	IsParity    uint32
+	Count       uint32
+}
+
+type EccSramUniqueUncorrectedErrorCounts_v1 struct {
+	Version    uint32
+	EntryCount uint32
+	Entries    *EccSramUniqueUncorrectedErrorEntry_v1
+}
+
+type EccSramUniqueUncorrectedErrorCounts struct {
+	Version    uint32
+	EntryCount uint32
+	Entries    *EccSramUniqueUncorrectedErrorEntry_v1
+}
+
+type RemappedRowsInfo_v2 struct {
+	CorrActiveRemaps   uint32
+	CorrInactiveRemaps uint32
+	UncActiveRemaps    uint32
+	UncInactiveRemaps  uint32
+	BPending           uint32
+	BFailureOccurred   uint32
+}
+
+type RusdSettings_v1 struct {
+	Version  uint32
+	PollMask uint64
 }
 
 type DeviceArchitecture uint32
@@ -792,6 +878,40 @@ type VgpuCreatablePlacementInfo struct {
 	Pad_cgo_0     [4]byte
 }
 
+type VgpuSchedulerStateInfo_v2 struct {
+	EngineId        uint32
+	SchedulerPolicy uint32
+	AvgFactor       uint32
+	Timeslice       uint32
+}
+
+type VgpuSchedulerLogEntry_v2 struct {
+	Timestamp                uint64
+	TimeRunTotal             uint64
+	TimeRun                  uint64
+	SwRunlistId              uint32
+	TargetTimeSlice          uint64
+	CumulativePreemptionTime uint64
+	Weight                   uint32
+	Pad_cgo_0                [4]byte
+}
+
+type VgpuSchedulerLogInfo_v2 struct {
+	EngineId        uint32
+	SchedulerPolicy uint32
+	AvgFactor       uint32
+	Timeslice       uint32
+	EntriesCount    uint32
+	LogEntries      [200]VgpuSchedulerLogEntry_v2
+}
+
+type VgpuSchedulerState_v2 struct {
+	EngineId        uint32
+	SchedulerPolicy uint32
+	AvgFactor       uint32
+	Frequency       uint32
+}
+
 type NvLinkPowerThres struct {
 	LowPwrThreshold uint32
 }
@@ -926,6 +1046,19 @@ type AccountingStats struct {
 	Reserved          [5]uint32
 }
 
+type AccountingStats_v2 struct {
+	Pid               uint32
+	IsRunning         uint32
+	GpuUtilization    uint32
+	MemoryUtilization uint32
+	MaxMemoryUsage    uint64
+	SampleCount       uint32
+	SumGpuUtil        uint64
+	SumFbUtil         uint64
+	Time              uint64
+	StartTime         uint64
+}
+
 type EncoderSessionInfo struct {
 	SessionId      uint32
 	Pid            uint32
@@ -1045,13 +1178,41 @@ type GpuFabricInfo_v2 struct {
 	HealthMask  uint32
 }
 
+type GpuFabricInfo_v3 struct {
+	Version       uint32
+	ClusterUuid   [16]uint8
+	Status        uint32
+	CliqueId      uint32
+	State         uint8
+	HealthMask    uint32
+	HealthSummary uint8
+	Pad_cgo_0     [3]byte
+}
+
 type GpuFabricInfoV struct {
-	Version     uint32
-	ClusterUuid [16]uint8
-	Status      uint32
-	CliqueId    uint32
-	State       uint8
-	HealthMask  uint32
+	Version       uint32
+	ClusterUuid   [16]uint8
+	Status        uint32
+	CliqueId      uint32
+	State         uint8
+	HealthMask    uint32
+	HealthSummary uint8
+	Pad_cgo_0     [3]byte
+}
+
+type CPERCursorHandle uint64
+
+type CPERCursor_v1 struct {
+	CperTypeMask uint32
+	Uuid         [80]int8
+	Handle       uint64
+}
+
+type GetCPER_v1 struct {
+	Cursor     CPERCursor_v1
+	Buffer     *uint8
+	BufferSize uint32
+	Pad_cgo_0  [4]byte
 }
 
 type SystemDriverBranchInfo_v1 struct {
@@ -1118,6 +1279,35 @@ type NvlinkSetBwMode struct {
 	Pad_cgo_0 [3]byte
 }
 
+type NvLinkInfo_v1 struct {
+	Version       uint32
+	IsNvleEnabled uint32
+}
+
+type NvlinkFirmwareVersion struct {
+	UcodeType uint8
+	Major     uint32
+	Minor     uint32
+	SubMinor  uint32
+}
+
+type NvlinkFirmwareInfo struct {
+	FirmwareVersion [100]NvlinkFirmwareVersion
+	NumValidEntries uint32
+}
+
+type NvLinkInfo_v2 struct {
+	Version       uint32
+	IsNvleEnabled uint32
+	FirmwareInfo  NvlinkFirmwareInfo
+}
+
+type NvLinkInfo struct {
+	Version       uint32
+	IsNvleEnabled uint32
+	FirmwareInfo  NvlinkFirmwareInfo
+}
+
 type VgpuVersion struct {
 	MinVersion uint32
 	MaxVersion uint32
@@ -1155,6 +1345,33 @@ type VgpuPgpuCompatibility struct {
 type ExcludedDeviceInfo struct {
 	PciInfo PciInfo
 	Uuid    [80]int8
+}
+
+type PRMTLV_v1 struct {
+	DataSize uint32
+	Status   uint32
+	InData   [496]uint8
+}
+
+type PRMCounterInput_v1 struct {
+	LocalPort uint32
+}
+
+type PRMCounterValue_v1 struct {
+	Status      uint32
+	OutputType  uint32
+	OutputValue [8]byte
+}
+
+type PRMCounter_v1 struct {
+	CounterId    uint32
+	InData       PRMCounterInput_v1
+	CounterValue PRMCounterValue_v1
+}
+
+type PRMCounterList_v1 struct {
+	NumCounters uint32
+	Counters    *PRMCounter_v1
 }
 
 type GpuInstancePlacement struct {
@@ -1296,7 +1513,7 @@ type nvmlGpmMetricsGetType struct {
 	NumMetrics uint32
 	Sample1    nvmlGpmSample
 	Sample2    nvmlGpmSample
-	Metrics    [210]GpmMetric
+	Metrics    [333]GpmMetric
 }
 
 type GpmSupport struct {
@@ -1366,6 +1583,11 @@ type WorkloadPowerProfileRequestedProfiles_v1 struct {
 type WorkloadPowerProfileRequestedProfiles struct {
 	Version               uint32
 	RequestedProfilesMask Mask255
+}
+
+type WorkloadPowerProfileUpdateProfiles_v1 struct {
+	Operation          uint32
+	UpdateProfilesMask Mask255
 }
 
 type PowerSmoothingProfile_v1 struct {

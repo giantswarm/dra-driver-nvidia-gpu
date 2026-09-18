@@ -1,18 +1,18 @@
 /*
- * Copyright (c) 2022-2024, NVIDIA CORPORATION.  All rights reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+Copyright The Kubernetes Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package main
 
@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -31,9 +32,30 @@ import (
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/klog/v2"
 
-	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/flock"
-	"github.com/NVIDIA/k8s-dra-driver-gpu/pkg/workqueue"
+	"sigs.k8s.io/dra-driver-nvidia-gpu/pkg/flock"
+	drametrics "sigs.k8s.io/dra-driver-nvidia-gpu/pkg/metrics"
+	"sigs.k8s.io/dra-driver-nvidia-gpu/pkg/workqueue"
 )
+
+// computeDomainPublishedDevices returns the devices the kubelet plugin should
+// advertise in its node ResourceSlice. IMEX channel devices other than
+// channel 0 are never advertised here (they are advertised as a network
+// resource from the control plane instead). ComputeDomain daemon devices are
+// additionally omitted when hostManaged is true, since daemon claims are
+// never valid in that mode (see applyComputeDomainDaemonConfig).
+func computeDomainPublishedDevices(allocatable AllocatableDevices, hostManaged bool) []resourceapi.Device {
+	var devices []resourceapi.Device
+	for _, device := range allocatable {
+		if device.Type() == ComputeDomainChannelType && device.Channel.ID != 0 {
+			continue
+		}
+		if hostManaged && device.Type() == ComputeDomainDaemonType {
+			continue
+		}
+		devices = append(devices, device.GetDevice())
+	}
+	return devices
+}
 
 const (
 	// ErrorRetryMaxTimeout limits the amount of time spent in the request
@@ -45,7 +67,7 @@ const (
 	// DriverPrepUprepFlockPath is the path to a lock file used to make sure
 	// that calls to nodePrepareResource() / nodeUnprepareResource() never
 	// interleave, node-globally.
-	DriverPrepUprepFlockPath = DriverPluginPath + "/pu.lock"
+	DriverPrepUprepFlockFileName = "pu.lock"
 )
 
 // permanentError defines an error indicating that it is permanent.
@@ -62,6 +84,7 @@ type driver struct {
 	pluginhelper *kubeletplugin.Helper
 	state        *DeviceState
 	pulock       *flock.Flock
+	healthcheck  *healthcheck
 }
 
 func NewDriver(ctx context.Context, config *Config) (*driver, error) {
@@ -70,10 +93,12 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 		return nil, err
 	}
 
+	puLockPath := filepath.Join(config.DriverPluginPath(), DriverPrepUprepFlockFileName)
+
 	driver := &driver{
 		client: config.clientsets.Core,
 		state:  state,
-		pulock: flock.NewFlock(DriverPrepUprepFlockPath),
+		pulock: flock.NewFlock(puLockPath),
 	}
 
 	helper, err := kubeletplugin.Start(
@@ -89,22 +114,17 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 		// prepare() must be incoming). Concurrency management for incoming
 		// requests is done with this driver's work queue abstraction.
 		kubeletplugin.Serialize(false),
+		kubeletplugin.RegistrarDirectoryPath(config.flags.kubeletRegistrarDirectoryPath),
+		kubeletplugin.PluginDataDirectoryPath(config.DriverPluginPath()),
 	)
 	if err != nil {
 		return nil, err
 	}
 	driver.pluginhelper = helper
 
-	// Enumerate the set of ComputeDomain daemon devices and publish them
+	// Enumerate the set of ComputeDomain devices to publish.
 	var resourceSlice resourceslice.Slice
-	for _, device := range state.allocatable {
-		// Explicitly exclude ComputeDomain channels from being advertised here. They
-		// are instead advertised in as a network resource from the control plane.
-		if device.Type() == ComputeDomainChannelType && device.Channel.ID != 0 {
-			continue
-		}
-		resourceSlice.Devices = append(resourceSlice.Devices, device.GetDevice())
-	}
+	resourceSlice.Devices = computeDomainPublishedDevices(state.allocatable, config.imexConfig.EffectiveHostManaged())
 
 	resources := resourceslice.DriverResources{
 		Pools: map[string]resourceslice.Pool{
@@ -113,11 +133,22 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 	}
 
 	if err := state.computeDomainManager.Start(ctx); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error starting ComputeDomain manager: %w", err)
 	}
 
+	// Pass checkpoint mutation functions to the cleanup manager.
+	if err := state.checkpointCleanupManager.Start(ctx, driver.nodeUnprepareResource, driver.deleteExpiredPrepareAbortedClaimEntries); err != nil {
+		return nil, fmt.Errorf("error starting CheckpointCleanupManager: %w", err)
+	}
+
+	healthcheck, err := setupHealthcheckPrimitives(ctx, config)
+	if err != nil {
+		return nil, fmt.Errorf("error setting up healtcheck primitives: %w", err)
+	}
+	driver.healthcheck = healthcheck
+
 	if err := driver.pluginhelper.PublishResources(ctx, resources); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error in PublishResources(): %w", err)
 	}
 
 	return driver, nil
@@ -127,9 +158,19 @@ func (d *driver) Shutdown() error {
 	if d == nil {
 		return nil
 	}
+
 	if err := d.state.computeDomainManager.Stop(); err != nil {
 		return fmt.Errorf("error stopping ComputeDomainManager: %w", err)
 	}
+
+	if err := d.state.checkpointCleanupManager.Stop(); err != nil {
+		return fmt.Errorf("error stopping CheckpointCleanupManager: %w", err)
+	}
+
+	if d.healthcheck != nil {
+		d.healthcheck.Stop()
+	}
+
 	d.pluginhelper.Stop()
 	return nil
 }
@@ -139,7 +180,7 @@ func (d *driver) PrepareResourceClaims(ctx context.Context, claims []*resourceap
 
 	var wg sync.WaitGroup
 	ctx, cancel := context.WithTimeout(ctx, ErrorRetryMaxTimeout)
-	workQueue := workqueue.New(workqueue.DefaultControllerRateLimiter())
+	workQueue := workqueue.New(workqueue.DefaultPrepUnprepRateLimiter())
 	results := make(map[types.UID]kubeletplugin.PrepareResult)
 
 	for _, claim := range claims {
@@ -170,7 +211,10 @@ func (d *driver) UnprepareResourceClaims(ctx context.Context, claimRefs []kubele
 
 	var wg sync.WaitGroup
 	ctx, cancel := context.WithTimeout(ctx, ErrorRetryMaxTimeout)
-	workQueue := workqueue.New(workqueue.DefaultControllerRateLimiter())
+
+	// Review: do we want to have a new queue per incoming Prepare/Unprepare
+	// request?
+	workQueue := workqueue.New(workqueue.DefaultPrepUnprepRateLimiter())
 	results := make(map[types.UID]error)
 
 	for _, claim := range claimRefs {
@@ -181,6 +225,9 @@ func (d *driver) UnprepareResourceClaims(ctx context.Context, claimRefs []kubele
 			if done {
 				results[claim.UID] = err
 				wg.Done()
+				if err != nil {
+					klog.V(0).Infof("Permanent error unpreparing devices for claim %v: %v", claim.UID, err)
+				}
 				return nil
 			}
 			return fmt.Errorf("%w", err)
@@ -203,15 +250,28 @@ func (d *driver) HandleError(ctx context.Context, err error, msg string) {
 	runtime.HandleErrorWithContext(ctx, err, msg)
 }
 
+func (d *driver) WatchHealthStatus(context.Context, chan<- kubeletplugin.DeviceHealthReport) error {
+	return kubeletplugin.ErrHealthNotSupported
+}
+
+// nodePrepareResource() returns a 2-tuple; the first value is a boolean
+// indicating whether the work is 'done', the second value is a result which can
+// also reflect an error. Set the boolean to `true` for any result wrapping a
+// non-retryable error.
 func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.ResourceClaim) (bool, kubeletplugin.PrepareResult) {
+	t0 := time.Now()
+
 	release, err := d.pulock.Acquire(ctx, flock.WithTimeout(10*time.Second))
 	if err != nil {
+		drametrics.IncNodePrepareError(DriverName, "lock_acquire")
 		res := kubeletplugin.PrepareResult{
 			Err: fmt.Errorf("error acquiring prep/unprep lock: %w", err),
 		}
 		return false, res
 	}
 	defer release()
+	doneInFlight := drametrics.TrackInFlight(DriverName, "prepare")
+	defer doneInFlight()
 
 	if claim.Status.Allocation == nil {
 		res := kubeletplugin.PrepareResult{
@@ -222,29 +282,55 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *resourceapi.Res
 
 	devs, err := d.state.Prepare(ctx, claim)
 	if err != nil {
+		drametrics.IncNodePrepareError(DriverName, "prepare_devices")
 		res := kubeletplugin.PrepareResult{
-			Err: fmt.Errorf("error preparing devices for claim %v: %w", claim.UID, err),
+			Err: fmt.Errorf("error preparing devices for claim '%s': %w", ResourceClaimToString(claim), err),
 		}
-		return isPermanentError(err), res
+		if isPermanentError(err) {
+			klog.Infof("Permanent error preparing devices for claim %v: %v", claim.UID, err)
+			return true, res
+		}
+		return false, res
 	}
 
-	klog.Infof("Returning newly prepared devices for claim '%v': %v", claim.UID, devs)
+	klog.V(1).Infof("Prepared devices for claim '%s': %v", ResourceClaimToString(claim), devs)
+	drametrics.ObserveRequest(DriverName, "prepare", time.Since(t0))
+
 	return true, kubeletplugin.PrepareResult{Devices: devs}
 }
 
+// Return 2-tuple: the first value is a boolean indicating to the retry logic
+// whether the work is 'done'.
 func (d *driver) nodeUnprepareResource(ctx context.Context, claimRef kubeletplugin.NamespacedObject) (bool, error) {
+	tstart := time.Now()
+
 	release, err := d.pulock.Acquire(ctx, flock.WithTimeout(10*time.Second))
 	if err != nil {
+		drametrics.IncNodeUnprepareError(DriverName, "lock_acquire")
 		return false, fmt.Errorf("error acquiring prep/unprep lock: %w", err)
 	}
 	defer release()
+	doneInFlight := drametrics.TrackInFlight(DriverName, "unprepare")
+	defer doneInFlight()
 
 	if err := d.state.Unprepare(ctx, claimRef); err != nil {
+		drametrics.IncNodeUnprepareError(DriverName, "unprepare_devices")
 		return isPermanentError(err), fmt.Errorf("error unpreparing devices for claim '%v': %w", claimRef.String(), err)
 	}
 
-	klog.Infof("unprepared devices for claim '%v'", claimRef.String())
+	klog.V(1).Infof("Unprepared devices for claim '%v'", claimRef.String())
+	drametrics.ObserveRequest(DriverName, "unprepare", time.Since(tstart))
 	return true, nil
+}
+
+func (d *driver) deleteExpiredPrepareAbortedClaimEntries(ctx context.Context, now time.Time, ttl time.Duration) (int, error) {
+	release, err := d.pulock.Acquire(ctx, flock.WithTimeout(10*time.Second))
+	if err != nil {
+		return 0, fmt.Errorf("error acquiring prep/unprep lock: %w", err)
+	}
+	defer release()
+
+	return d.state.deleteExpiredPrepareAbortedClaimsFromCheckpoint(now, ttl)
 }
 
 // TODO: implement loop to remove CDI files from the CDI path for claimUIDs
